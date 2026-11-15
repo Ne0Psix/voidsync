@@ -16,6 +16,10 @@
         ytPlayer: null,
         ytReady: false,
         suppressPlayerEvents: false,
+        lastHardSeekTime: 0,
+        lastAudioSeekTime: 0,
+        lastYtTime: 0,
+        bufTimer: null,
         wakeLock: null,
         subOffset: 0,
         bufferLock: false,
@@ -42,6 +46,7 @@
     const vizCanvas = $('audio-viz');
     const ytContainer = $('yt-container');
     const playerWrapper = $('player-wrapper');
+    const tapLayer = $('player-tap-layer');
     const urlParams = new URLSearchParams(window.location.search);
 
     if (state.nick) $('gate-nick').value = state.nick;
@@ -205,6 +210,7 @@
     }
 
     function destroyCurrentMedia() {
+        clearTimeout(state.bufTimer);
         if (state.hls) {
             state.hls.destroy();
             state.hls = null;
@@ -228,9 +234,9 @@
         Array.from(videoEl.querySelectorAll('track')).forEach(t => t.remove());
         vizCanvas.classList.add('hidden');
         videoEl.classList.remove('hidden');
-        $('sel-quality').innerHTML = '<option value="-1">QUAL: AUTO</option>';
-        $('sel-audio').innerHTML = '<option value="-1">AUD: DEFAULT</option>';
-        $('sel-subs').innerHTML = '<option value="-1">SUB: OFF</option>';
+        $('sel-quality').innerHTML = '<option value="-1">АВТО</option>';
+        $('sel-audio').innerHTML = '<option value="-1">ПО УМОЛЧАНИЮ</option>';
+        $('sel-subs').innerHTML = '<option value="-1">ВЫКЛ</option>';
     }
 
     function addTextSubtitleTrack(label, vttText) {
@@ -244,7 +250,7 @@
         const idx = videoEl.textTracks.length - 1;
         const opt = document.createElement('option');
         opt.value = String(idx);
-        opt.textContent = `SUB: ${label}`;
+        opt.textContent = label;
         $('sel-subs').appendChild(opt);
         $('sel-subs').value = String(idx);
         for (let i = 0; i < videoEl.textTracks.length; i++) {
@@ -254,7 +260,7 @@
 
     function loadRoomMedia(media) {
         state.media = media;
-        $('media-title-overlay').textContent = media.title || 'NO MEDIA LOADED';
+        $('media-title-overlay').textContent = media.title || '';
         destroyCurrentMedia();
 
         if (media.mode === 'idle') return;
@@ -267,7 +273,10 @@
                 state.ytPlayer = new YT.Player('yt-player', {
                     videoId: media.videoId,
                     playerVars: {
-                        controls: 1,
+                        controls: 0,
+                        disablekb: 1,
+                        iv_load_policy: 3,
+                        fs: 0,
                         rel: 0,
                         modestbranding: 1,
                         playsinline: 1,
@@ -276,14 +285,21 @@
                     events: {
                         onReady: () => {
                             state.ytReady = true;
+                            populateYtQuality();
                             applySyncToPlayer(true);
                         },
                         onStateChange: (ev) => {
                             if (state.suppressPlayerEvents) return;
-                            if (ev.data === YT.PlayerState.PLAYING && !state.media.isPlaying) {
-                                sendWs({ type: 'media_control', action: 'play', time: state.ytPlayer.getCurrentTime() });
-                            } else if (ev.data === YT.PlayerState.PAUSED && state.media.isPlaying) {
-                                sendWs({ type: 'media_control', action: 'pause', time: state.ytPlayer.getCurrentTime() });
+                            if (ev.data === YT.PlayerState.PLAYING) {
+                                populateYtQuality();
+                                sendWs({ type: 'buffer_state', buffering: false });
+                            } else if (ev.data === YT.PlayerState.BUFFERING) {
+                                clearTimeout(state.bufTimer);
+                                state.bufTimer = setTimeout(() => {
+                                    if (state.ytPlayer?.getPlayerState() === YT.PlayerState.BUFFERING) {
+                                        sendWs({ type: 'buffer_state', buffering: true });
+                                    }
+                                }, 1200);
                             } else if (ev.data === YT.PlayerState.ENDED && state.hostId === state.clientId) {
                                 sendWs({ type: 'queue_next' });
                             }
@@ -301,7 +317,7 @@
                 applySyncToPlayer(true);
             } else {
                 $('p2p-transfer-overlay').classList.remove('hidden');
-                $('p2p-transfer-overlay').textContent = 'CONNECTING TO P2P PEER...';
+                $('p2p-transfer-overlay').textContent = 'ПОДКЛЮЧЕНИЕ К P2P УСТРОЙСТВУ...';
                 sendWs({ type: 'rtc_signal', targetId: media.p2pHostId, channel: 'file', data: { requestFile: true } });
             }
             return;
@@ -356,8 +372,8 @@
             videoEl.src = media.src;
             videoEl.muted = true;
             audioEl.src = media.audioSrc;
-            populateSelect('sel-quality', media.qualities, 'QUAL');
-            populateSelect('sel-audio', media.audioTracks, 'AUD');
+            populateSelect('sel-quality', media.qualities);
+            populateSelect('sel-audio', media.audioTracks);
             applySyncToPlayer(true);
         } else if (media.mode === 'direct') {
             videoEl.src = media.src;
@@ -367,7 +383,7 @@
                     applySyncToPlayer(true);
                 }
             };
-            populateSelect('sel-quality', media.qualities, 'QUAL');
+            populateSelect('sel-quality', media.qualities);
             applySyncToPlayer(true);
         }
 
@@ -383,49 +399,65 @@
                     videoEl.appendChild(track);
                     const opt = document.createElement('option');
                     opt.value = String(videoEl.textTracks.length - 1);
-                    opt.textContent = `SUB: ${s.label}`;
+                    opt.textContent = s.label;
                     $('sel-subs').appendChild(opt);
                 }
             });
         }
     }
 
+    function populateYtQuality() {
+        if (!state.ytPlayer || !state.ytPlayer.getAvailableQualityLevels) return;
+        const levels = state.ytPlayer.getAvailableQualityLevels();
+        if (!levels || levels.length === 0) return;
+        const qSel = $('sel-quality');
+        qSel.innerHTML = '<option value="default">АВТО</option>';
+        const map = { highres: '4K+', hd2160: '2160p', hd1440: '1440p', hd1080: '1080p', hd720: '720p', large: '480p', medium: '360p', small: '240p' };
+        levels.forEach(l => {
+            if (l === 'auto') return;
+            const opt = document.createElement('option');
+            opt.value = l;
+            opt.textContent = map[l] || l;
+            qSel.appendChild(opt);
+        });
+    }
+
     function populateHlsSelectors(hls) {
         const qSel = $('sel-quality');
-        qSel.innerHTML = '<option value="-1">QUAL: AUTO</option>';
+        qSel.innerHTML = '<option value="-1">АВТО</option>';
         hls.levels.forEach((lvl, idx) => {
             const opt = document.createElement('option');
             opt.value = String(idx);
-            opt.textContent = `QUAL: ${lvl.height || idx}p`;
+            opt.textContent = `${lvl.height || idx}p`;
             qSel.appendChild(opt);
         });
 
         const aSel = $('sel-audio');
         aSel.innerHTML = '';
         if (hls.audioTracks.length === 0) {
-            aSel.innerHTML = '<option value="-1">AUD: DEFAULT</option>';
+            aSel.innerHTML = '<option value="-1">ПО УМОЛЧАНИЮ</option>';
         } else {
             hls.audioTracks.forEach((tr, idx) => {
                 const opt = document.createElement('option');
                 opt.value = String(idx);
-                opt.textContent = `AUD: ${tr.name || tr.lang || idx + 1}`;
+                opt.textContent = tr.name || tr.lang || `Дорожка ${idx + 1}`;
                 if (idx === hls.audioTrack) opt.selected = true;
                 aSel.appendChild(opt);
             });
         }
     }
 
-    function populateSelect(id, list, prefix) {
+    function populateSelect(id, list) {
         const el = $(id);
         el.innerHTML = '';
         if (!list || list.length === 0) {
-            el.innerHTML = `<option value="-1">${prefix}: DEFAULT</option>`;
+            el.innerHTML = `<option value="-1">ПО УМОЛЧАНИЮ</option>`;
             return;
         }
         list.forEach(item => {
             const opt = document.createElement('option');
             opt.value = item.url;
-            opt.textContent = `${prefix}: ${item.label}`;
+            opt.textContent = item.label;
             el.appendChild(opt);
         });
     }
@@ -447,12 +479,12 @@
         }
     }
 
-    let lastYtTime = 0;
     function applySyncToPlayer(hard) {
         const m = state.media;
         if (!m || m.mode === 'idle' || m.mode === 'webrtc') return;
 
         const expected = getExpectedTime();
+        const now = Date.now();
         state.suppressPlayerEvents = true;
 
         if (m.mode === 'youtube') {
@@ -463,21 +495,26 @@
             const cur = state.ytPlayer.getCurrentTime ? state.ytPlayer.getCurrentTime() : 0;
             const yState = state.ytPlayer.getPlayerState ? state.ytPlayer.getPlayerState() : -1;
             const drift = expected - cur;
-            $('sync-telemetry').textContent = `OFFSET: ${Math.round(state.clockOffset)}ms | DRIFT: ${Math.round(drift * 1000)}ms | RTT: ${state.rtt}ms`;
+            $('sync-telemetry').textContent = `${state.rtt}ms`;
 
             if (m.isPlaying && yState !== 1 && yState !== 3) {
                 state.ytPlayer.playVideo();
             } else if (!m.isPlaying && yState === 1) {
                 state.ytPlayer.pauseVideo();
             }
-            if (hard || Math.abs(drift) > 0.65) {
-                if (Math.abs(drift) > 0.15) state.ytPlayer.seekTo(expected, true);
+
+            if (hard || (Math.abs(drift) > 1.5 && now - state.lastHardSeekTime > 4000)) {
+                if (Math.abs(drift) > 0.2) {
+                    state.ytPlayer.seekTo(expected, true);
+                    state.lastHardSeekTime = now;
+                }
             }
+
             if (state.ytPlayer.getPlaybackRate && state.ytPlayer.getPlaybackRate() !== m.playbackRate) {
                 state.ytPlayer.setPlaybackRate(m.playbackRate);
             }
-            lastYtTime = expected;
-            $('btn-play').textContent = m.isPlaying ? 'PAUSE' : 'PLAY';
+            state.lastYtTime = expected;
+            $('btn-play').textContent = m.isPlaying ? '❚❚' : '▶';
             $('sel-speed').value = String(m.playbackRate);
             setTimeout(() => { state.suppressPlayerEvents = false; }, 180);
             return;
@@ -492,18 +529,29 @@
             if (m.mode === 'dual' && !audioEl.paused) audioEl.pause();
         }
 
-        const drift = expected - driver.currentTime;
-        $('sync-telemetry').textContent = `OFFSET: ${Math.round(state.clockOffset)}ms | DRIFT: ${Math.round(drift * 1000)}ms | RTT: ${state.rtt}ms`;
+        const drift = expected - (driver.currentTime || 0);
+        $('sync-telemetry').textContent = `${state.rtt}ms`;
 
-        if (hard || Math.abs(drift) > 0.35 || !m.isPlaying) {
-            if (Math.abs(drift) > 0.05 && isFinite(expected)) {
+        if (hard) {
+            if (Math.abs(drift) > 0.12 && isFinite(expected)) {
                 driver.currentTime = expected;
                 if (m.mode === 'dual') audioEl.currentTime = expected;
+                state.lastHardSeekTime = now;
             }
             driver.playbackRate = m.playbackRate;
             if (m.mode === 'dual') audioEl.playbackRate = m.playbackRate;
-        } else if (Math.abs(drift) > 0.04) {
-            const adj = drift > 0 ? 1.03 : 0.97;
+        } else if (!m.isPlaying) {
+            if (Math.abs(drift) > 0.12 && isFinite(expected)) {
+                driver.currentTime = expected;
+                if (m.mode === 'dual') audioEl.currentTime = expected;
+            }
+        } else if (Math.abs(drift) > 1.5 && (now - state.lastHardSeekTime > 4000) && !driver.seeking) {
+            driver.currentTime = expected;
+            if (m.mode === 'dual') audioEl.currentTime = expected;
+            state.lastHardSeekTime = now;
+            driver.playbackRate = m.playbackRate;
+        } else if (Math.abs(drift) > 0.06 && !driver.seeking) {
+            const adj = drift > 0 ? 1.04 : 0.96;
             driver.playbackRate = m.playbackRate * adj;
             if (m.mode === 'dual') audioEl.playbackRate = m.playbackRate * adj;
         } else {
@@ -511,13 +559,19 @@
             if (m.mode === 'dual') audioEl.playbackRate = m.playbackRate;
         }
 
-        if (m.mode === 'dual') {
-            if (Math.abs(driver.currentTime - audioEl.currentTime) > 0.04) {
+        if (m.mode === 'dual' && !driver.seeking && !audioEl.seeking) {
+            const audioDiff = driver.currentTime - audioEl.currentTime;
+            if (Math.abs(audioDiff) > 0.4 && (now - state.lastAudioSeekTime > 3000)) {
                 audioEl.currentTime = driver.currentTime;
+                state.lastAudioSeekTime = now;
+            } else if (Math.abs(audioDiff) > 0.06) {
+                audioEl.playbackRate = driver.playbackRate * (audioDiff > 0 ? 1.04 : 0.96);
+            } else {
+                audioEl.playbackRate = driver.playbackRate;
             }
         }
 
-        $('btn-play').textContent = m.isPlaying ? 'PAUSE' : 'PLAY';
+        $('btn-play').textContent = m.isPlaying ? '❚❚' : '▶';
         $('sel-speed').value = String(m.playbackRate);
         setTimeout(() => { state.suppressPlayerEvents = false; }, 80);
     }
@@ -531,10 +585,6 @@
         if (m.mode === 'youtube' && state.ytReady && state.ytPlayer?.getCurrentTime) {
             cur = state.ytPlayer.getCurrentTime();
             dur = state.ytPlayer.getDuration();
-            if (!state.suppressPlayerEvents && Math.abs(cur - lastYtTime) > 2.2) {
-                sendWs({ type: 'media_control', action: 'seek', time: cur });
-            }
-            lastYtTime = cur;
         } else {
             const driver = getActiveDriver();
             cur = driver.currentTime || 0;
@@ -547,7 +597,7 @@
         if (dur > 0 && !$('seek-bar').matches(':active')) {
             $('seek-bar').value = (cur / dur) * 100;
         }
-    }, 350);
+    }, 450);
 
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden && state.ws) {
@@ -561,29 +611,76 @@
     });
 
     [videoEl, audioEl].forEach(el => {
-        el.addEventListener('waiting', () => sendWs({ type: 'buffer_state', buffering: true }));
-        el.addEventListener('playing', () => sendWs({ type: 'buffer_state', buffering: false }));
+        el.addEventListener('waiting', () => {
+            if (el.seeking) return;
+            clearTimeout(state.bufTimer);
+            state.bufTimer = setTimeout(() => {
+                if (el.readyState < 3 && !el.paused && !el.seeking) {
+                    sendWs({ type: 'buffer_state', buffering: true });
+                }
+            }, 900);
+        });
+        el.addEventListener('playing', () => {
+            clearTimeout(state.bufTimer);
+            sendWs({ type: 'buffer_state', buffering: false });
+        });
+        el.addEventListener('canplay', () => {
+            clearTimeout(state.bufTimer);
+            sendWs({ type: 'buffer_state', buffering: false });
+        });
         el.addEventListener('ended', () => {
             if (el === getActiveDriver() && state.hostId === state.clientId) sendWs({ type: 'queue_next' });
         });
     });
 
-    playerWrapper.addEventListener('click', (e) => {
-        if (e.target.closest('#controls-bar') || e.target.closest('button') || e.target.closest('input') || e.target.closest('select')) return;
-        playerWrapper.classList.toggle('hud-hidden');
+    let lastTap = 0;
+    let tapTimeout = null;
+    tapLayer.addEventListener('click', (e) => {
+        const now = Date.now();
+        if (now - lastTap < 260) {
+            clearTimeout(tapTimeout);
+            lastTap = 0;
+            toggleFullscreen();
+        } else {
+            lastTap = now;
+            tapTimeout = setTimeout(() => {
+                playerWrapper.classList.toggle('hud-hidden');
+                $('player-settings-menu').classList.add('hidden');
+            }, 260);
+        }
     });
 
-    playerWrapper.addEventListener('dblclick', (e) => {
-        if (e.target.closest('#controls-bar')) return;
-        $('btn-fullscreen').click();
-    });
+    async function toggleFullscreen() {
+        try {
+            if (!document.fullscreenElement) {
+                if (playerWrapper.requestFullscreen) await playerWrapper.requestFullscreen();
+                else if (playerWrapper.webkitRequestFullscreen) await playerWrapper.webkitRequestFullscreen();
+                if (screen.orientation && screen.orientation.lock) {
+                    await screen.orientation.lock('landscape').catch(() => {});
+                }
+            } else {
+                if (document.exitFullscreen) await document.exitFullscreen();
+                else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+            }
+        } catch {}
+    }
 
-    $('btn-hud-toggle').onclick = () => playerWrapper.classList.toggle('hud-hidden');
+    document.addEventListener('fullscreenchange', () => {
+        if (document.fullscreenElement) {
+            if (screen.orientation && screen.orientation.lock) {
+                screen.orientation.lock('landscape').catch(() => {});
+            }
+        } else {
+            if (screen.orientation && screen.orientation.unlock) {
+                try { screen.orientation.unlock(); } catch {}
+            }
+        }
+    });
 
     document.addEventListener('keydown', (e) => {
         if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
         if (e.code === 'Space') { e.preventDefault(); $('btn-play').click(); }
-        else if (e.key === 'f' || e.key === 'F') $('btn-fullscreen').click();
+        else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
         else if (e.key === 'h' || e.key === 'H') playerWrapper.classList.toggle('hud-hidden');
         else if (e.key === 'm' || e.key === 'M') $('btn-mute').click();
         else if (e.key === 'ArrowRight') {
@@ -594,6 +691,11 @@
             sendWs({ type: 'media_control', action: 'seek', time: Math.max(0, t - 5) });
         }
     });
+
+    $('btn-pset-toggle').onclick = (e) => {
+        e.stopPropagation();
+        $('player-settings-menu').classList.toggle('hidden');
+    };
 
     $('btn-unmute-prompt').onclick = () => {
         const driver = getActiveDriver();
@@ -639,13 +741,13 @@
 
     $('btn-mute').onclick = () => {
         if (state.media.mode === 'youtube' && state.ytReady) {
-            if (state.ytPlayer.isMuted()) { state.ytPlayer.unMute(); $('btn-mute').textContent = 'VOL'; }
-            else { state.ytPlayer.mute(); $('btn-mute').textContent = 'MUTED'; }
+            if (state.ytPlayer.isMuted()) { state.ytPlayer.unMute(); $('btn-mute').textContent = 'ЗВУК'; }
+            else { state.ytPlayer.mute(); $('btn-mute').textContent = 'БЕЗ ЗВ.'; }
             return;
         }
         const target = (state.media.mode === 'dual' || state.media.mode === 'audio') ? audioEl : videoEl;
         target.muted = !target.muted;
-        $('btn-mute').textContent = target.muted ? 'MUTED' : 'VOL';
+        $('btn-mute').textContent = target.muted ? 'БЕЗ ЗВ.' : 'ЗВУК';
     };
 
     $('sel-speed').onchange = (e) => {
@@ -654,7 +756,9 @@
 
     $('sel-quality').onchange = (e) => {
         const val = e.target.value;
-        if (state.hls) {
+        if (state.media.mode === 'youtube' && state.ytReady && state.ytPlayer.setPlaybackQuality) {
+            state.ytPlayer.setPlaybackQuality(val);
+        } else if (state.hls) {
             state.hls.currentLevel = parseInt(val, 10);
         } else if (val !== '-1') {
             const t = videoEl.currentTime;
@@ -698,7 +802,6 @@
         if (!file) return;
         let text = await file.text();
         if (file.name.toLowerCase().endsWith('.srt')) text = srtToVtt(text);
-        addTextSubtitleTrack(file.name, text);
         sendWs({ type: 'sub_share', label: file.name, vtt: text });
     };
 
@@ -717,25 +820,21 @@
 
     $('btn-sub-minus').onclick = () => shiftSubtitles(-0.5);
     $('btn-sub-plus').onclick = () => shiftSubtitles(0.5);
-
     $('btn-pip').onclick = () => {
         if (document.pictureInPictureElement) document.exitPictureInPicture();
         else videoEl.requestPictureInPicture().catch(() => {});
     };
-
-    $('btn-theater').onclick = () => {
-        $('sidebar').classList.toggle('hidden');
-        $('main-col').classList.toggle('theater-mode');
-    };
+    $('btn-fullscreen').onclick = toggleFullscreen;
 
     $('btn-toggle-sidebar').onclick = () => {
-        $('sidebar').classList.toggle('hidden');
+        const sb = $('sidebar');
+        sb.classList.toggle('hidden');
+        $('btn-toggle-sidebar').classList.toggle('active-state', !sb.classList.contains('hidden'));
     };
 
-    $('btn-fullscreen').onclick = () => {
-        if (!document.fullscreenElement) playerWrapper.requestFullscreen().catch(() => {});
-        else document.exitFullscreen();
-    };
+    $('btn-open-menu').onclick = () => $('menu-modal').classList.remove('hidden');
+    $('btn-close-menu').onclick = () => $('menu-modal').classList.add('hidden');
+    $('menu-modal').onclick = (e) => { if (e.target === $('menu-modal')) $('menu-modal').classList.add('hidden'); };
 
     function setupAudioVisualizer() {
         if (!state.audioCtx) state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -757,14 +856,14 @@
                 requestAnimationFrame(drawViz);
                 vizCanvas.width = vizCanvas.clientWidth;
                 vizCanvas.height = vizCanvas.clientHeight;
-                ctx2d.fillStyle = '#000';
+                ctx2d.fillStyle = '#09090b';
                 ctx2d.fillRect(0, 0, vizCanvas.width, vizCanvas.height);
                 analyser.getByteFrequencyData(buf);
                 const barW = vizCanvas.width / buf.length;
-                ctx2d.fillStyle = '#fff';
+                ctx2d.fillStyle = '#f4f4f5';
                 for (let i = 0; i < buf.length; i++) {
-                    const h = (buf[i] / 255) * vizCanvas.height * 0.75;
-                    ctx2d.fillRect(i * barW + 2, vizCanvas.height - h - 50, barW - 4, h);
+                    const h = (buf[i] / 255) * vizCanvas.height * 0.7;
+                    ctx2d.fillRect(i * barW + 2, vizCanvas.height - h - 60, barW - 4, h);
                 }
             }
             drawViz();
@@ -783,17 +882,17 @@
     $('btn-save-torbox').onclick = () => {
         state.torboxKey = $('input-torbox-key').value.trim();
         localStorage.setItem('voidsync_torbox', state.torboxKey);
-        $('btn-save-torbox').textContent = 'SAVED';
-        setTimeout(() => { $('btn-save-torbox').textContent = 'SAVE KEY'; }, 1500);
+        $('btn-save-torbox').textContent = 'СОХРАНЕНО';
+        setTimeout(() => { $('btn-save-torbox').textContent = 'СОХРАНИТЬ'; }, 1500);
     };
 
     function runBrowserWebTorrent(source) {
         if (!window.WebTorrent) {
-            $('upload-status').textContent = 'WEBTORRENT LIB LOADING';
+            $('upload-status').textContent = 'ОЖИДАНИЕ WEBTORRENT';
             return;
         }
         if (!state.wtClient) state.wtClient = new window.WebTorrent();
-        $('upload-status').textContent = 'FINDING WEBRTC PEERS...';
+        $('upload-status').textContent = 'ПОИСК ПИРОВ WEBRTC...';
         state.wtClient.add(source, (torrent) => {
             const box = $('torrent-files-list');
             box.innerHTML = '';
@@ -801,10 +900,10 @@
                 if (!/\.(mp4|mkv|webm|mp3|wav|m4a)$/i.test(f.name)) return;
                 const row = document.createElement('div');
                 row.className = 'list-item';
-                row.innerHTML = `<span class="list-item-title">${f.name} (${(f.length / 1048576).toFixed(1)} MB)</span>`;
+                row.innerHTML = `<span class="list-item-title">${f.name} (${(f.length / 1048576).toFixed(1)} МБ)</span>`;
                 const btn = document.createElement('button');
-                btn.className = 'btn-xs';
-                btn.textContent = 'PLAY P2P';
+                btn.className = 'btn-xs btn-accent';
+                btn.textContent = 'ВКЛЮЧИТЬ P2P';
                 btn.onclick = () => {
                     f.getBlob((err, blob) => {
                         if (err || !blob) return;
@@ -823,6 +922,7 @@
                                 p2pFile: { name: f.name, size: f.length, type: 'video/mp4' }
                             }
                         });
+                        $('menu-modal').classList.add('hidden');
                     });
                 };
                 row.appendChild(btn);
@@ -840,20 +940,22 @@
             const row = document.createElement('div');
             row.className = 'list-item';
             const mb = (f.size / 1048576).toFixed(1);
-            row.innerHTML = `<span class="list-item-title">${f.name} (${mb} MB)</span>`;
+            row.innerHTML = `<span class="list-item-title">${f.name} (${mb} МБ)</span>`;
             const btn = document.createElement('button');
-            btn.className = 'btn-xs';
-            btn.textContent = 'PLAY';
+            btn.className = 'btn-xs btn-accent';
+            btn.textContent = 'СМОТРЕТЬ';
             btn.onclick = async () => {
-                $('upload-status').textContent = 'FETCHING STREAM...';
+                $('upload-status').textContent = 'ПОЛУЧЕНИЕ ПОТОКА...';
                 const resp = await fetch('/api/torrent/torbox-play', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ torboxKey: state.torboxKey, torrentId: tb.torrentId, fileId: f.id, title: f.name })
                 });
                 const data = await resp.json();
-                if (data.media) sendWs({ type: 'media_load', media: data.media });
-                else $('upload-status').textContent = `ERR: ${data.error}`;
+                if (data.media) {
+                    sendWs({ type: 'media_load', media: data.media });
+                    $('menu-modal').classList.add('hidden');
+                }
                 $('upload-status').textContent = '';
             };
             row.appendChild(btn);
@@ -864,7 +966,7 @@
 
     async function resolveAndLoad(url, addToQueueOnly = false) {
         if (!url) return;
-        $('upload-status').textContent = 'RESOLVING...';
+        $('upload-status').textContent = 'ПОДКЛЮЧЕНИЕ ИСТОЧНИКА...';
         try {
             const resp = await fetch('/api/resolve', {
                 method: 'POST',
@@ -889,16 +991,15 @@
                     sendWs({ type: 'queue_add', item: { title: data.media.title, media: data.media } });
                 } else {
                     sendWs({ type: 'media_load', media: data.media });
+                    $('menu-modal').classList.add('hidden');
                 }
                 if (Array.isArray(data.playlistTracks)) {
-                    data.playlistTracks.forEach(tr => {
-                        sendWs({ type: 'queue_add', item: tr });
-                    });
+                    data.playlistTracks.forEach(tr => sendWs({ type: 'queue_add', item: tr }));
                 }
                 $('upload-status').textContent = '';
             }
         } catch (err) {
-            $('upload-status').textContent = `ERR: ${err.message}`;
+            $('upload-status').textContent = `ОШИБКА: ${err.message}`;
         }
     }
 
@@ -908,7 +1009,7 @@
     $('input-torrent-file').onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        $('upload-status').textContent = 'LOADING TORRENT...';
+        $('upload-status').textContent = 'ЧТЕНИЕ ТОРРЕНТА...';
         const fd = new FormData();
         fd.append('torrent', file);
         fd.append('torboxKey', state.torboxKey);
@@ -926,7 +1027,7 @@
                 runBrowserWebTorrent(new Blob([arr]));
             }
         } catch (err) {
-            $('upload-status').textContent = `ERR: ${err.message}`;
+            $('upload-status').textContent = `ОШИБКА: ${err.message}`;
         }
     };
 
@@ -938,7 +1039,7 @@
             type: 'media_load',
             media: {
                 mode: 'p2p_file',
-                title: `P2P // ${file.name}`,
+                title: file.name,
                 src: `p2p:${file.name}:${file.size}`,
                 audioSrc: '',
                 qualities: [],
@@ -948,12 +1049,13 @@
                 p2pFile: { name: file.name, size: file.size, type: file.type }
             }
         });
+        $('menu-modal').classList.add('hidden');
     };
 
     $('input-local-media').onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        $('upload-status').textContent = 'UPLOADING...';
+        $('upload-status').textContent = 'ЗАГРУЗКА НА СЕРВЕР...';
         const fd = new FormData();
         fd.append('media', file);
         try {
@@ -962,8 +1064,9 @@
             if (data.error) throw new Error(data.error);
             sendWs({ type: 'media_load', media: data.media });
             $('upload-status').textContent = '';
+            $('menu-modal').classList.add('hidden');
         } catch (err) {
-            $('upload-status').textContent = `ERR: ${err.message}`;
+            $('upload-status').textContent = `ОШИБКА: ${err.message}`;
         }
     };
 
@@ -971,7 +1074,7 @@
         const q = $('input-search').value.trim();
         if (!q) return;
         const box = $('search-results');
-        box.innerHTML = '<div class="empty-hint">SEARCHING...</div>';
+        box.innerHTML = '<div class="empty-hint">ПОИСК...</div>';
         try {
             const resp = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
             const data = await resp.json();
@@ -981,18 +1084,18 @@
                 row.className = 'list-item';
                 const title = document.createElement('span');
                 title.className = 'list-item-title';
-                title.textContent = `[${r.duration || '--:--'}] ${r.title} (${r.channel})`;
+                title.textContent = `[${r.duration || '--:--'}] ${r.title}`;
                 const acts = document.createElement('div');
                 acts.className = 'list-item-actions';
 
                 const bPlay = document.createElement('button');
-                bPlay.className = 'btn-xs';
-                bPlay.textContent = 'PLAY';
+                bPlay.className = 'btn-xs btn-accent';
+                bPlay.textContent = '▶';
                 bPlay.onclick = () => resolveAndLoad(r.url, false);
 
                 const bQueue = document.createElement('button');
                 bQueue.className = 'btn-xs';
-                bQueue.textContent = '+QUEUE';
+                bQueue.textContent = '+ ОЧЕРЕДЬ';
                 bQueue.onclick = () => sendWs({ type: 'queue_add', item: { title: r.title, videoId: r.videoId, url: r.url } });
 
                 acts.append(bPlay, bQueue);
@@ -1000,7 +1103,7 @@
                 box.appendChild(row);
             });
         } catch {
-            box.innerHTML = '<div class="empty-hint">SEARCH ERROR</div>';
+            box.innerHTML = '<div class="empty-hint">ОШИБКА ПОИСКА</div>';
         }
     };
 
@@ -1012,14 +1115,17 @@
         queue.forEach(q => {
             const row = document.createElement('div');
             row.className = 'list-item';
-            row.innerHTML = `<span class="list-item-title">${q.title} [${q.addedBy}]</span>`;
+            row.innerHTML = `<span class="list-item-title">${q.title}</span>`;
             const acts = document.createElement('div');
             acts.className = 'list-item-actions';
 
             const bPlay = document.createElement('button');
-            bPlay.className = 'btn-xs';
-            bPlay.textContent = 'PLAY';
-            bPlay.onclick = () => sendWs({ type: 'queue_next', id: q.id });
+            bPlay.className = 'btn-xs btn-accent';
+            bPlay.textContent = '▶';
+            bPlay.onclick = () => {
+                sendWs({ type: 'queue_next', id: q.id });
+                $('menu-modal').classList.add('hidden');
+            };
 
             const bUp = document.createElement('button');
             bUp.className = 'btn-xs';
@@ -1033,7 +1139,7 @@
 
             const bDel = document.createElement('button');
             bDel.className = 'btn-xs';
-            bDel.textContent = 'X';
+            bDel.textContent = '✕';
             bDel.onclick = () => sendWs({ type: 'queue_remove', id: q.id });
 
             acts.append(bPlay, bUp, bDn, bDel);
@@ -1056,12 +1162,12 @@
             const acts = document.createElement('div');
             acts.className = 'list-item-actions';
             const bLoad = document.createElement('button');
-            bLoad.className = 'btn-xs';
-            bLoad.textContent = 'LOAD';
+            bLoad.className = 'btn-xs btn-accent';
+            bLoad.textContent = 'ЗАГРУЗИТЬ';
             bLoad.onclick = () => items.forEach(it => sendWs({ type: 'queue_add', item: it }));
             const bDel = document.createElement('button');
             bDel.className = 'btn-xs';
-            bDel.textContent = 'X';
+            bDel.textContent = '✕';
             bDel.onclick = () => {
                 delete saved[name];
                 localStorage.setItem('voidsync_playlists', JSON.stringify(saved));
@@ -1107,7 +1213,7 @@
             if (u.isHost) tags.push('HOST');
             if (u.inVoice) tags.push(u.micMuted ? 'MUTED' : 'MIC');
             if (u.buffering) tags.push('BUF');
-            label.textContent = `${u.nick}${u.id === state.clientId ? ' (YOU)' : ''} ${tags.length ? '[' + tags.join('/') + ']' : ''}`;
+            label.textContent = `${u.nick}${u.id === state.clientId ? ' (вы)' : ''} ${tags.length ? '[' + tags.join('/') + ']' : ''}`;
 
             info.append(dot, label);
             row.appendChild(info);
@@ -1148,7 +1254,8 @@
                 if (p.audioEl) p.audioEl.remove();
                 state.voicePeers.delete(pid);
             }
-            $('btn-voice-join').textContent = 'JOIN VOICE';
+            $('btn-voice-join').textContent = 'ГОЛОС';
+            $('btn-voice-join').classList.remove('active-state');
             $('btn-mic-toggle').classList.add('hidden');
             $('btn-deafen').classList.add('hidden');
             sendWs({ type: 'voice_state', inVoice: false, micMuted: true });
@@ -1161,14 +1268,15 @@
             });
             state.inVoice = true;
             state.micMuted = false;
-            $('btn-voice-join').textContent = 'LEAVE VOICE';
+            $('btn-voice-join').textContent = 'ВЫЙТИ';
+            $('btn-voice-join').classList.add('active-state');
             $('btn-mic-toggle').classList.remove('hidden');
-            $('btn-mic-toggle').textContent = 'MIC: ON';
+            $('btn-mic-toggle').textContent = 'МИК: ВКЛ';
             $('btn-mic-toggle').classList.add('active-state');
             $('btn-deafen').classList.remove('hidden');
             sendWs({ type: 'voice_state', inVoice: true, micMuted: false });
         } catch {
-            alert('MICROPHONE ACCESS DENIED');
+            alert('НЕТ ДОСТУПА К МИКРОФОНУ');
         }
     }
 
@@ -1178,14 +1286,14 @@
         if (!state.localVoiceStream) return;
         state.micMuted = !state.micMuted;
         state.localVoiceStream.getAudioTracks().forEach(t => { t.enabled = !state.micMuted; });
-        $('btn-mic-toggle').textContent = state.micMuted ? 'MIC: OFF' : 'MIC: ON';
+        $('btn-mic-toggle').textContent = state.micMuted ? 'МИК: ВЫКЛ' : 'МИК: ВКЛ';
         $('btn-mic-toggle').classList.toggle('active-state', !state.micMuted);
         sendWs({ type: 'voice_state', inVoice: true, micMuted: state.micMuted });
     };
 
     $('btn-deafen').onclick = () => {
         state.deafened = !state.deafened;
-        $('btn-deafen').textContent = state.deafened ? 'AUDIO: OFF' : 'AUDIO: ON';
+        $('btn-deafen').textContent = state.deafened ? 'ЗВУК: ВЫКЛ' : 'ЗВУК: ВКЛ';
         for (const [pid, p] of state.voicePeers.entries()) {
             if (p.gainNode) p.gainNode.gain.value = state.deafened ? 0 : (state.peerVolumes[pid] ?? 1);
         }
@@ -1262,14 +1370,14 @@
         return peerObj;
     }
 
-    $('btn-share-screen').onclick = async () => {
+    $('btn-share-screen-modal').onclick = async () => {
         if (state.localScreenStream) {
             state.localScreenStream.getTracks().forEach(t => t.stop());
             state.localScreenStream = null;
             for (const pc of state.screenPeers.values()) pc.close();
             state.screenPeers.clear();
-            $('btn-share-screen').textContent = 'SHARE SCREEN';
-            sendWs({ type: 'media_load', media: { mode: 'idle', title: 'NO MEDIA LOADED', src: '' } });
+            $('btn-share-screen-modal').textContent = 'ТРАНСЛИРОВАТЬ ВКЛАДКУ / ЭКРАН';
+            sendWs({ type: 'media_load', media: { mode: 'idle', title: '', src: '' } });
             return;
         }
         try {
@@ -1277,10 +1385,11 @@
                 video: { frameRate: { ideal: 60 } },
                 audio: true
             });
-            $('btn-share-screen').textContent = 'STOP SHARE';
+            $('btn-share-screen-modal').textContent = 'ОСТАНОВИТЬ ТРАНСЛЯЦИЮ';
+            $('menu-modal').classList.add('hidden');
             sendWs({ type: 'screen_share_start' });
             state.localScreenStream.getVideoTracks()[0].onended = () => {
-                if (state.localScreenStream) $('btn-share-screen').click();
+                if (state.localScreenStream) $('btn-share-screen-modal').click();
             };
         } catch {}
     };
@@ -1354,9 +1463,7 @@
                             dc.send(buf);
                             offset += chunkSize;
                         }
-                        if (offset >= file.size) {
-                            dc.send('__EOF__');
-                        }
+                        if (offset >= file.size) dc.send('__EOF__');
                     };
                     dc.onbufferedamountlow = pump;
                     pump();
@@ -1388,7 +1495,7 @@
                             chunks.push(m.data);
                             received += m.data.byteLength;
                             const pct = Math.min(100, Math.round((received / total) * 100));
-                            $('p2p-transfer-overlay').textContent = `RECEIVING P2P FILE: ${pct}% (${(received / 1048576).toFixed(1)} MB)`;
+                            $('p2p-transfer-overlay').textContent = `ЗАГРУЗКА P2P: ${pct}% (${(received / 1048576).toFixed(1)} МБ)`;
                         };
                     };
                 }
@@ -1422,13 +1529,18 @@
         }
     }
 
-    const REACTION_SET = ['♥', '🔥', '😂', '👍', '👎', '😮'];
+    const HEART = '♥\uFE0E';
+    const REACTION_SET = [HEART, '★\uFE0E', '▲', '▼', '✓', '✕'];
 
     function appendChatMessage(msg) {
         const box = $('chat-messages');
+        const isMine = msg.userId === state.clientId;
+        const wrap = document.createElement('div');
+        wrap.className = `msg-wrap ${isMine ? 'mine' : 'other'}`;
+        wrap.id = `msg-${msg.id}`;
+
         const card = document.createElement('div');
         card.className = 'msg-card';
-        card.id = `msg-${msg.id}`;
 
         const meta = document.createElement('div');
         meta.className = 'msg-meta';
@@ -1450,7 +1562,7 @@
             if (mime.startsWith('image/')) {
                 const img = document.createElement('img');
                 img.src = msg.file.url;
-                img.onclick = () => window.open(msg.file.url, '_blank');
+                img.onclick = (e) => { e.stopPropagation(); window.open(msg.file.url, '_blank'); };
                 mediaBox.appendChild(img);
             } else if (mime.startsWith('video/')) {
                 const vid = document.createElement('video');
@@ -1467,28 +1579,62 @@
                 a.href = msg.file.url;
                 a.download = msg.file.originalName;
                 a.className = 'msg-file-link';
-                a.textContent = `FILE: ${msg.file.originalName} (${(msg.file.size / 1024).toFixed(1)} KB)`;
+                a.textContent = `${msg.file.originalName} (${(msg.file.size / 1024).toFixed(1)} КБ)`;
                 mediaBox.appendChild(a);
             }
             card.appendChild(mediaBox);
         }
+
+        const footer = document.createElement('div');
+        footer.className = 'msg-footer';
 
         const reactRow = document.createElement('div');
         reactRow.className = 'msg-reactions';
         reactRow.id = `reacts-${msg.id}`;
 
         const picker = document.createElement('div');
-        picker.className = 'react-picker';
+        picker.className = 'react-picker hidden';
         REACTION_SET.forEach(em => {
             const b = document.createElement('button');
             b.className = 'react-btn';
             b.textContent = em;
-            b.onclick = () => sendWs({ type: 'chat_react', messageId: msg.id, emoji: em });
+            b.onclick = (e) => {
+                e.stopPropagation();
+                sendWs({ type: 'chat_react', messageId: msg.id, emoji: em });
+                picker.classList.add('hidden');
+            };
             picker.appendChild(b);
         });
 
-        card.append(reactRow, picker);
-        box.appendChild(card);
+        const toggleReactBtn = document.createElement('button');
+        toggleReactBtn.className = 'react-toggle-btn';
+        toggleReactBtn.textContent = '+';
+        toggleReactBtn.title = 'Реакции';
+        toggleReactBtn.onclick = (e) => {
+            e.stopPropagation();
+            picker.classList.toggle('hidden');
+        };
+
+        footer.append(reactRow, toggleReactBtn);
+
+        let lastMsgTap = 0;
+        card.addEventListener('dblclick', (e) => {
+            if (e.target.tagName === 'A' || e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO') return;
+            sendWs({ type: 'chat_react', messageId: msg.id, emoji: HEART });
+        });
+        card.addEventListener('touchend', (e) => {
+            const now = Date.now();
+            if (now - lastMsgTap < 280) {
+                e.preventDefault();
+                sendWs({ type: 'chat_react', messageId: msg.id, emoji: HEART });
+                lastMsgTap = 0;
+            } else {
+                lastMsgTap = now;
+            }
+        });
+
+        wrap.append(card, footer, picker);
+        box.appendChild(wrap);
         renderMessageReactions(reactRow, msg.id, msg.reactions || {});
         box.scrollTop = box.scrollHeight;
     }
@@ -1526,7 +1672,7 @@
 
     async function uploadChatFile(file) {
         if (!file) return;
-        $('chat-upload-progress').textContent = 'UPLOADING...';
+        $('chat-upload-progress').textContent = 'ЗАГРУЗКА...';
         const fd = new FormData();
         fd.append('file', file);
         try {
@@ -1561,7 +1707,7 @@
             state.recorder.stop();
             state.isRecording = false;
             clearInterval(state.recTimer);
-            $('btn-voice-msg').textContent = 'REC';
+            $('btn-voice-msg').textContent = '●';
             $('btn-voice-msg').classList.remove('active-state');
             return;
         }
@@ -1586,12 +1732,12 @@
                 $('btn-voice-msg').textContent = formatTime(state.recSeconds);
             }, 1000);
         } catch {
-            alert('MIC DENIED');
+            alert('НЕТ ДОСТУПА К МИКРОФОНУ');
         }
     };
 
     function updateBufferLockUI() {
-        $('btn-buffer-lock').textContent = `BUFFER LOCK: ${state.bufferLock ? 'ON' : 'OFF'}`;
+        $('btn-buffer-lock').textContent = state.bufferLock ? 'ВКЛ' : 'ВЫКЛ';
         $('btn-buffer-lock').classList.toggle('active-state', state.bufferLock);
     }
 
@@ -1601,8 +1747,10 @@
 
     $('btn-copy-link').onclick = () => {
         navigator.clipboard.writeText(window.location.href).then(() => {
-            $('btn-copy-link').textContent = 'COPIED';
-            setTimeout(() => { $('btn-copy-link').textContent = 'COPY LINK'; }, 1500);
+            const badge = $('room-badge');
+            const old = badge.textContent;
+            badge.textContent = 'СКОПИРОВАНО';
+            setTimeout(() => { badge.textContent = old; }, 1500);
         });
     };
 
