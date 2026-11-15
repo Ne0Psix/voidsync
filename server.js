@@ -56,7 +56,7 @@ function getRoom(roomId) {
             clients: new Map(),
             media: {
                 mode: 'idle',
-                title: 'NO MEDIA LOADED',
+                title: '',
                 src: '',
                 audioSrc: '',
                 videoId: '',
@@ -261,6 +261,28 @@ async function resolveSpotify(url) {
 
     if (tracks.length === 0) throw new Error('SPOTIFY_NO_TRACKS');
     return tracks;
+}
+
+async function resolveYouTubeObject(ytId, url) {
+    let title = 'YouTube Video';
+    try {
+        const meta = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${ytId}&format=json`);
+        if (meta.ok) {
+            const j = await meta.json();
+            if (j.title) title = j.title;
+        }
+    } catch {}
+
+    return {
+        mode: 'youtube',
+        title,
+        videoId: ytId,
+        src: `yt:${ytId}`,
+        audioSrc: '',
+        qualities: [],
+        audioTracks: [],
+        subtitles: []
+    };
 }
 
 async function extractWithYtDlp(targetUrl) {
@@ -611,32 +633,8 @@ app.post('/api/resolve', async (req, res) => {
         }
 
         if (ytId) {
-            try {
-                const ytDlpMedia = await extractWithYtDlp(url);
-                return res.json({ media: ytDlpMedia });
-            } catch {
-                let title = 'YouTube Video';
-                try {
-                    const meta = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${ytId}&format=json`);
-                    if (meta.ok) {
-                        const j = await meta.json();
-                        if (j.title) title = j.title;
-                    }
-                } catch {}
-
-                return res.json({
-                    media: {
-                        mode: 'youtube',
-                        title,
-                        videoId: ytId,
-                        src: `yt:${ytId}`,
-                        audioSrc: '',
-                        qualities: [],
-                        audioTracks: [],
-                        subtitles: []
-                    }
-                });
-            }
+            const media = await resolveYouTubeObject(ytId, url);
+            return res.json({ media });
         }
 
         if (/\.(mp4|webm|mp3|wav|ogg|m4a)(\?.*)?$/i.test(url)) {
@@ -948,51 +946,18 @@ wss.on('connection', (ws) => {
                     if (nextItem.media) {
                         media = nextItem.media;
                     } else if (nextItem.videoId) {
-                        try {
-                            media = await extractWithYtDlp(`https://www.youtube.com/watch?v=${nextItem.videoId}`);
-                        } catch {
-                            media = {
-                                mode: 'youtube',
-                                title: nextItem.title,
-                                videoId: nextItem.videoId,
-                                src: `yt:${nextItem.videoId}`,
-                                audioSrc: '',
-                                qualities: [],
-                                audioTracks: [],
-                                subtitles: []
-                            };
-                        }
+                        media = await resolveYouTubeObject(nextItem.videoId, nextItem.url || '');
+                        if (nextItem.title) media.title = nextItem.title;
                     } else if (nextItem.spotifyQuery) {
                         const found = await searchYouTubeFast(nextItem.spotifyQuery);
                         if (found[0]) {
-                            media = {
-                                mode: 'youtube',
-                                title: nextItem.title,
-                                videoId: found[0].videoId,
-                                src: `yt:${found[0].videoId}`,
-                                audioSrc: '',
-                                qualities: [],
-                                audioTracks: [],
-                                subtitles: []
-                            };
+                            media = await resolveYouTubeObject(found[0].videoId, '');
+                            media.title = nextItem.title;
                         }
                     } else if (nextItem.url) {
                         const ytId = extractYouTubeId(nextItem.url);
                         if (ytId) {
-                            try {
-                                media = await extractWithYtDlp(nextItem.url);
-                            } catch {
-                                media = {
-                                    mode: 'youtube',
-                                    title: nextItem.title,
-                                    videoId: ytId,
-                                    src: `yt:${ytId}`,
-                                    audioSrc: '',
-                                    qualities: [],
-                                    audioTracks: [],
-                                    subtitles: []
-                                };
-                            }
+                            media = await resolveYouTubeObject(ytId, nextItem.url);
                         } else {
                             media = await extractWithYtDlp(nextItem.url);
                         }
@@ -1063,7 +1028,7 @@ wss.on('connection', (ws) => {
             case 'screen_share_start': {
                 currentRoom.media = {
                     mode: 'webrtc',
-                    title: `LIVE SCREEN // ${client.nick}`,
+                    title: `SCREEN // ${client.nick}`,
                     src: '',
                     audioSrc: '',
                     videoId: '',
@@ -1127,7 +1092,7 @@ setInterval(() => {
             });
         }
     }
-}, 2500);
+}, 4000);
 
 setInterval(() => {
     const cutoff = Date.now() - 2 * 60 * 60 * 1000;
