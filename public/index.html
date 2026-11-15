@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>VOID // SYNC</title>
+    <link rel="stylesheet" href="/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/webtorrent@2.5.10/dist/webtorrent.min.js"></script>
+    <script src="https://www.youtube.com/iframe_api"></script>
+</head>
+<body>
+
+<div id="gate-overlay" class="overlay">
+    <div class="gate-box">
+        <div class="gate-title">VOID // SYNC</div>
+        <div class="field-group">
+            <label for="gate-nick">NICKNAME</label>
+            <input type="text" id="gate-nick" maxlength="24" placeholder="ENTER NICK">
+        </div>
+        <div class="field-group">
+            <label for="gate-room">ROOM CODE</label>
+            <input type="text" id="gate-room" maxlength="16" placeholder="LEAVE EMPTY FOR NEW">
+        </div>
+        <button id="btn-enter" class="btn-primary">CONNECT TO ROOM</button>
+    </div>
+</div>
+
+<div id="app" class="app hidden">
+    <header class="topbar">
+        <div class="top-left">
+            <span class="brand">VOID//SYNC</span>
+            <span id="room-badge" class="badge">ROOM: ---</span>
+            <button id="btn-copy-link" class="btn-sm">COPY LINK</button>
+            <button id="btn-buffer-lock" class="btn-sm">BUFFER LOCK: OFF</button>
+        </div>
+        <div class="top-center">
+            <span id="sync-telemetry" class="telemetry">OFFSET: 0ms | DRIFT: 0ms | RTT: 0ms</span>
+        </div>
+        <div class="top-right">
+            <input type="text" id="inline-nick" class="input-sm" maxlength="24">
+            <button id="btn-save-nick" class="btn-sm">SET NICK</button>
+            <button id="btn-hud-toggle" class="btn-sm">HUD</button>
+            <button id="btn-share-screen" class="btn-sm">SHARE SCREEN</button>
+            <button id="btn-toggle-sidebar" class="btn-sm">CHAT / VOICE</button>
+        </div>
+    </header>
+
+    <div class="workspace">
+        <main class="main-col" id="main-col">
+            <div class="player-wrapper" id="player-wrapper">
+                <div id="yt-container" class="yt-container hidden"><div id="yt-player"></div></div>
+                <video id="video-player" playsinline crossorigin="anonymous"></video>
+                <audio id="audio-player" crossorigin="anonymous"></audio>
+                <canvas id="audio-viz" class="hidden"></canvas>
+
+                <div id="media-title-overlay" class="media-title-bar">NO MEDIA LOADED</div>
+                <div id="p2p-transfer-overlay" class="p2p-overlay hidden"></div>
+                <button id="btn-unmute-prompt" class="unmute-prompt hidden">CLICK TO UNMUTE STREAM</button>
+
+                <div class="controls-bar" id="controls-bar">
+                    <div class="seek-row">
+                        <input type="range" id="seek-bar" min="0" max="100" step="0.1" value="0">
+                    </div>
+                    <div class="ctrl-row">
+                        <div class="ctrl-left">
+                            <button id="btn-play" class="btn-ctrl">PLAY</button>
+                            <button id="btn-sync-now" class="btn-ctrl">SYNC</button>
+                            <span id="time-display" class="time-text">00:00 / 00:00</span>
+                            <button id="btn-mute" class="btn-ctrl">VOL</button>
+                            <input type="range" id="vol-slider" min="0" max="1" step="0.01" value="1">
+                        </div>
+                        <div class="ctrl-right">
+                            <select id="sel-speed" class="ctrl-select">
+                                <option value="0.25">0.25x</option>
+                                <option value="0.5">0.50x</option>
+                                <option value="0.75">0.75x</option>
+                                <option value="1" selected>1.00x</option>
+                                <option value="1.25">1.25x</option>
+                                <option value="1.5">1.50x</option>
+                                <option value="2">2.00x</option>
+                            </select>
+                            <select id="sel-quality" class="ctrl-select">
+                                <option value="-1">QUAL: AUTO</option>
+                            </select>
+                            <select id="sel-audio" class="ctrl-select">
+                                <option value="-1">AUD: DEFAULT</option>
+                            </select>
+                            <select id="sel-subs" class="ctrl-select">
+                                <option value="-1">SUB: OFF</option>
+                            </select>
+                            <button id="btn-sub-upload" class="btn-ctrl">+SUB</button>
+                            <input type="file" id="input-sub-file" accept=".srt,.vtt" class="hidden">
+                            <button id="btn-sub-minus" class="btn-ctrl">-0.5s</button>
+                            <button id="btn-sub-plus" class="btn-ctrl">+0.5s</button>
+                            <button id="btn-pip" class="btn-ctrl">PIP</button>
+                            <button id="btn-theater" class="btn-ctrl">THEATER</button>
+                            <button id="btn-fullscreen" class="btn-ctrl">FULL</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dock-panel">
+                <div class="dock-tabs">
+                    <button class="dock-tab active" data-tab="tab-url">LINK / LOCAL P2P</button>
+                    <button class="dock-tab" data-tab="tab-search">SEARCH</button>
+                    <button class="dock-tab" data-tab="tab-torrent">TORRENT / MAGNET</button>
+                    <button class="dock-tab" data-tab="tab-queue">QUEUE & PLAYLISTS</button>
+                    <button class="dock-tab" data-tab="tab-bridge">DRM BRIDGE (NETFLIX)</button>
+                </div>
+
+                <div class="dock-content active" id="tab-url">
+                    <div class="action-row">
+                        <input type="text" id="input-media-url" placeholder="YouTube, Spotify, VK, Google Drive, Magnet, Direct MP4/M3U8...">
+                        <button id="btn-play-url" class="btn-primary">LOAD & PLAY</button>
+                        <button id="btn-queue-url" class="btn-sm">+ QUEUE</button>
+                    </div>
+                    <div class="action-row">
+                        <label class="file-btn">
+                            P2P LOCAL FILE (PHONE/PC DIRECT, UNLIMITED)
+                            <input type="file" id="input-p2p-media" class="hidden">
+                        </label>
+                        <label class="file-btn">
+                            SERVER UPLOAD (&lt;150MB)
+                            <input type="file" id="input-local-media" class="hidden">
+                        </label>
+                        <span id="upload-status" class="status-text"></span>
+                    </div>
+                </div>
+
+                <div class="dock-content" id="tab-search">
+                    <div class="action-row">
+                        <input type="text" id="input-search" placeholder="Search videos, movies, music...">
+                        <button id="btn-search" class="btn-primary">SEARCH</button>
+                    </div>
+                    <div id="search-results" class="list-box"></div>
+                </div>
+
+                <div class="dock-content" id="tab-torrent">
+                    <div class="action-row">
+                        <input type="text" id="input-torbox-key" placeholder="Optional TorBox Free API Key (for TCP/UDP magnets without PC)">
+                        <button id="btn-save-torbox" class="btn-sm">SAVE KEY</button>
+                        <label class="file-btn">
+                            LOAD .TORRENT FILE
+                            <input type="file" id="input-torrent-file" accept=".torrent" class="hidden">
+                        </label>
+                    </div>
+                    <div id="torrent-files-list" class="list-box">
+                        <div class="empty-hint">Paste a Magnet link in LINK tab or load .torrent file here.</div>
+                    </div>
+                </div>
+
+                <div class="dock-content" id="tab-queue">
+                    <div class="action-row">
+                        <button id="btn-play-next" class="btn-sm">NEXT IN QUEUE</button>
+                        <button id="btn-clear-queue" class="btn-sm">CLEAR QUEUE</button>
+                        <input type="text" id="input-playlist-name" class="input-sm" placeholder="Playlist name">
+                        <button id="btn-save-playlist" class="btn-sm">SAVE PLAYLIST</button>
+                    </div>
+                    <div class="split-lists">
+                        <div>
+                            <div class="sub-head">CURRENT ROOM QUEUE</div>
+                            <div id="queue-list" class="list-box"></div>
+                        </div>
+                        <div>
+                            <div class="sub-head">SAVED LOCAL PLAYLISTS</div>
+                            <div id="playlists-list" class="list-box"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dock-content" id="tab-bridge">
+                    <div class="bridge-info">
+                        <p>DRM sites (Netflix, Kinopoisk, Disney+): use <b>SHARE SCREEN</b> or install the Userscript Bridge to sync native 4K playback across accounts.</p>
+                        <a href="/sync-bridge.user.js" download="sync-bridge.user.js" class="btn-primary inline-btn">DOWNLOAD SYNC-BRIDGE.USER.JS</a>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <aside class="sidebar" id="sidebar">
+            <div class="users-panel">
+                <div class="panel-header">
+                    <span>ROOM USERS (<span id="user-count">0</span>)</span>
+                    <div class="voice-btns">
+                        <button id="btn-voice-join" class="btn-xs">JOIN VOICE</button>
+                        <button id="btn-mic-toggle" class="btn-xs hidden">MIC: OFF</button>
+                        <button id="btn-deafen" class="btn-xs hidden">AUDIO: ON</button>
+                    </div>
+                </div>
+                <div id="users-list" class="users-list"></div>
+            </div>
+
+            <div class="chat-panel" id="chat-drop-zone">
+                <div class="panel-header">
+                    <span>LIVE CHAT</span>
+                    <span id="chat-upload-progress" class="status-text"></span>
+                </div>
+                <div id="chat-messages" class="chat-messages"></div>
+                <div class="chat-input-area">
+                    <label class="btn-xs file-btn">
+                        FILE
+                        <input type="file" id="input-chat-file" class="hidden">
+                    </label>
+                    <button id="btn-voice-msg" class="btn-xs">REC</button>
+                    <input type="text" id="input-chat" placeholder="Message (Paste/Drop files)...">
+                    <button id="btn-chat-send" class="btn-xs">SEND</button>
+                </div>
+            </div>
+        </aside>
+    </div>
+</div>
+
+<div id="voice-audio-container" class="hidden"></div>
+<script src="/app.js"></script>
+</body>
+</html>
