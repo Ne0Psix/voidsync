@@ -192,6 +192,7 @@ async function searchYouTubeFast(query) {
                 videoId: v.videoId,
                 title: v.title?.runs?.map(r => r.text).join('') || 'YouTube Video',
                 url: `https://www.youtube.com/watch?v=${v.videoId}`,
+                thumbnail: `https://i.ytimg.com/vi/${v.videoId}/mqdefault.jpg`,
                 duration: v.lengthText?.simpleText || 'LIVE',
                 channel: v.ownerText?.runs?.[0]?.text || ''
             });
@@ -263,7 +264,7 @@ async function resolveSpotify(url) {
     return tracks;
 }
 
-async function resolveYouTubeObject(ytId, url) {
+async function resolveYouTubeObject(ytId) {
     let title = 'YouTube Video';
     try {
         const meta = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${ytId}&format=json`);
@@ -349,7 +350,7 @@ async function extractWithYtDlp(targetUrl) {
             url: registerMediaToken(v.url, v.http_headers || reqHeaders)
         }));
         const audioTracks = audioOnly.slice(0, 4).map((a, idx) => ({
-            label: a.language || `Track ${idx + 1}`,
+            label: a.language || `Дорожка ${idx + 1}`,
             url: registerMediaToken(a.url, a.http_headers || reqHeaders)
         }));
         return {
@@ -498,7 +499,7 @@ async function handleUploadedMedia(filePath, originalName) {
         qualities: [],
         audioTracks: audioStreams.map((a, idx) => ({
             index: idx,
-            label: a.tags?.title || a.tags?.language || `Audio ${idx + 1}`
+            label: a.tags?.title || a.tags?.language || `Дорожка ${idx + 1}`
         })),
         subtitles: subResults
     };
@@ -633,7 +634,7 @@ app.post('/api/resolve', async (req, res) => {
         }
 
         if (ytId) {
-            const media = await resolveYouTubeObject(ytId, url);
+            const media = await resolveYouTubeObject(ytId);
             return res.json({ media });
         }
 
@@ -706,7 +707,7 @@ app.post('/api/torrent/torbox-play', async (req, res) => {
                 src: directUrl,
                 fallbackProxy: registerMediaToken(directUrl, {}),
                 audioSrc: '',
-                qualities: [{ label: 'SOURCE', url: directUrl }],
+                qualities: [{ label: 'ИСТОЧНИК', url: directUrl }],
                 audioTracks: [],
                 subtitles: []
             }
@@ -946,18 +947,18 @@ wss.on('connection', (ws) => {
                     if (nextItem.media) {
                         media = nextItem.media;
                     } else if (nextItem.videoId) {
-                        media = await resolveYouTubeObject(nextItem.videoId, nextItem.url || '');
+                        media = await resolveYouTubeObject(nextItem.videoId);
                         if (nextItem.title) media.title = nextItem.title;
                     } else if (nextItem.spotifyQuery) {
                         const found = await searchYouTubeFast(nextItem.spotifyQuery);
                         if (found[0]) {
-                            media = await resolveYouTubeObject(found[0].videoId, '');
+                            media = await resolveYouTubeObject(found[0].videoId);
                             media.title = nextItem.title;
                         }
                     } else if (nextItem.url) {
                         const ytId = extractYouTubeId(nextItem.url);
                         if (ytId) {
-                            media = await resolveYouTubeObject(ytId, nextItem.url);
+                            media = await resolveYouTubeObject(ytId);
                         } else {
                             media = await extractWithYtDlp(nextItem.url);
                         }
@@ -988,6 +989,7 @@ wss.on('connection', (ws) => {
                     kind: msg.kind || 'text',
                     text: (msg.text || '').slice(0, 4000),
                     file: msg.file || null,
+                    audioDuration: msg.audioDuration || 0,
                     reactions: {},
                     time: Date.now()
                 };
@@ -1028,7 +1030,7 @@ wss.on('connection', (ws) => {
             case 'screen_share_start': {
                 currentRoom.media = {
                     mode: 'webrtc',
-                    title: `SCREEN // ${client.nick}`,
+                    title: `ЭКРАН // ${client.nick}`,
                     src: '',
                     audioSrc: '',
                     videoId: '',
@@ -1108,5 +1110,5 @@ setInterval(() => {
 }, 30 * 60 * 1000);
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`VOIDSYNC ONLINE ON PORT ${PORT}`);
+    console.log(`SERVER ONLINE ON PORT ${PORT}`);
 });
