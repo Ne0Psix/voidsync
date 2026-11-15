@@ -35,12 +35,15 @@
         audioCtx: null,
         peerVolumes: {},
         recorder: null,
+        recStream: null,
         recChunks: [],
         isRecording: false,
+        recStartAt: 0,
         recTimer: null,
         recSeconds: 0
     };
 
+    const appEl = $('app');
     const videoEl = $('video-player');
     const audioEl = $('audio-player');
     const vizCanvas = $('audio-viz');
@@ -52,6 +55,21 @@
     if (state.nick) $('gate-nick').value = state.nick;
     if (state.torboxKey) $('input-torbox-key').value = state.torboxKey;
     if (urlParams.get('room')) $('gate-room').value = urlParams.get('room').toUpperCase();
+
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', () => {
+            appEl.style.height = `${window.visualViewport.height}px`;
+            const scroller = $('chat-messages');
+            scroller.scrollTop = scroller.scrollHeight;
+        });
+    }
+
+    function showToast(text) {
+        const toast = $('toast');
+        toast.textContent = text;
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 2200);
+    }
 
     function formatTime(sec) {
         if (!isFinite(sec) || sec < 0) return '00:00';
@@ -127,7 +145,7 @@
         state.nick = nick;
         localStorage.setItem('voidsync_nick', nick);
         $('inline-nick').value = nick;
-        $('room-badge').textContent = `ROOM: ${roomId}`;
+        $('room-badge').textContent = roomId;
 
         const newUrl = `${window.location.pathname}?room=${roomId}`;
         window.history.replaceState({}, '', newUrl);
@@ -479,6 +497,19 @@
         }
     }
 
+    function triggerFlashIcon(isPlaying) {
+        const box = $('play-state-flash');
+        $('flash-icon-play').classList.toggle('hidden', !isPlaying);
+        $('flash-icon-pause').classList.toggle('hidden', isPlaying);
+        box.classList.add('show');
+        setTimeout(() => box.classList.remove('show'), 320);
+    }
+
+    function updatePlayBtnIcon(isPlaying) {
+        $('icon-play').classList.toggle('hidden', isPlaying);
+        $('icon-pause').classList.toggle('hidden', !isPlaying);
+    }
+
     function applySyncToPlayer(hard) {
         const m = state.media;
         if (!m || m.mode === 'idle' || m.mode === 'webrtc') return;
@@ -495,7 +526,7 @@
             const cur = state.ytPlayer.getCurrentTime ? state.ytPlayer.getCurrentTime() : 0;
             const yState = state.ytPlayer.getPlayerState ? state.ytPlayer.getPlayerState() : -1;
             const drift = expected - cur;
-            $('sync-telemetry').textContent = `${state.rtt}ms`;
+            $('sync-telemetry').textContent = `PING: ${state.rtt}ms`;
 
             if (m.isPlaying && yState !== 1 && yState !== 3) {
                 state.ytPlayer.playVideo();
@@ -503,8 +534,8 @@
                 state.ytPlayer.pauseVideo();
             }
 
-            if (hard || (Math.abs(drift) > 1.5 && now - state.lastHardSeekTime > 4000)) {
-                if (Math.abs(drift) > 0.2) {
+            if (hard || (Math.abs(drift) > 1.5 && now - state.lastHardSeekTime > 4500)) {
+                if (Math.abs(drift) > 0.25) {
                     state.ytPlayer.seekTo(expected, true);
                     state.lastHardSeekTime = now;
                 }
@@ -514,7 +545,7 @@
                 state.ytPlayer.setPlaybackRate(m.playbackRate);
             }
             state.lastYtTime = expected;
-            $('btn-play').textContent = m.isPlaying ? '❚❚' : '▶';
+            updatePlayBtnIcon(m.isPlaying);
             $('sel-speed').value = String(m.playbackRate);
             setTimeout(() => { state.suppressPlayerEvents = false; }, 180);
             return;
@@ -530,10 +561,10 @@
         }
 
         const drift = expected - (driver.currentTime || 0);
-        $('sync-telemetry').textContent = `${state.rtt}ms`;
+        $('sync-telemetry').textContent = `PING: ${state.rtt}ms`;
 
         if (hard) {
-            if (Math.abs(drift) > 0.12 && isFinite(expected)) {
+            if (Math.abs(drift) > 0.15 && isFinite(expected)) {
                 driver.currentTime = expected;
                 if (m.mode === 'dual') audioEl.currentTime = expected;
                 state.lastHardSeekTime = now;
@@ -541,16 +572,16 @@
             driver.playbackRate = m.playbackRate;
             if (m.mode === 'dual') audioEl.playbackRate = m.playbackRate;
         } else if (!m.isPlaying) {
-            if (Math.abs(drift) > 0.12 && isFinite(expected)) {
+            if (Math.abs(drift) > 0.15 && isFinite(expected)) {
                 driver.currentTime = expected;
                 if (m.mode === 'dual') audioEl.currentTime = expected;
             }
-        } else if (Math.abs(drift) > 1.5 && (now - state.lastHardSeekTime > 4000) && !driver.seeking) {
+        } else if (Math.abs(drift) > 1.5 && (now - state.lastHardSeekTime > 4500) && !driver.seeking) {
             driver.currentTime = expected;
             if (m.mode === 'dual') audioEl.currentTime = expected;
             state.lastHardSeekTime = now;
             driver.playbackRate = m.playbackRate;
-        } else if (Math.abs(drift) > 0.06 && !driver.seeking) {
+        } else if (Math.abs(drift) > 0.08 && !driver.seeking) {
             const adj = drift > 0 ? 1.04 : 0.96;
             driver.playbackRate = m.playbackRate * adj;
             if (m.mode === 'dual') audioEl.playbackRate = m.playbackRate * adj;
@@ -564,14 +595,14 @@
             if (Math.abs(audioDiff) > 0.4 && (now - state.lastAudioSeekTime > 3000)) {
                 audioEl.currentTime = driver.currentTime;
                 state.lastAudioSeekTime = now;
-            } else if (Math.abs(audioDiff) > 0.06) {
+            } else if (Math.abs(audioDiff) > 0.08) {
                 audioEl.playbackRate = driver.playbackRate * (audioDiff > 0 ? 1.04 : 0.96);
             } else {
                 audioEl.playbackRate = driver.playbackRate;
             }
         }
 
-        $('btn-play').textContent = m.isPlaying ? '❚❚' : '▶';
+        updatePlayBtnIcon(m.isPlaying);
         $('sel-speed').value = String(m.playbackRate);
         setTimeout(() => { state.suppressPlayerEvents = false; }, 80);
     }
@@ -597,7 +628,7 @@
         if (dur > 0 && !$('seek-bar').matches(':active')) {
             $('seek-bar').value = (cur / dur) * 100;
         }
-    }, 450);
+    }, 500);
 
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden && state.ws) {
@@ -618,7 +649,7 @@
                 if (el.readyState < 3 && !el.paused && !el.seeking) {
                     sendWs({ type: 'buffer_state', buffering: true });
                 }
-            }, 900);
+            }, 950);
         });
         el.addEventListener('playing', () => {
             clearTimeout(state.bufTimer);
@@ -635,7 +666,7 @@
 
     let lastTap = 0;
     let tapTimeout = null;
-    tapLayer.addEventListener('click', (e) => {
+    tapLayer.addEventListener('click', () => {
         const now = Date.now();
         if (now - lastTap < 260) {
             clearTimeout(tapTimeout);
@@ -651,26 +682,33 @@
     });
 
     async function toggleFullscreen() {
+        const root = document.documentElement;
         try {
-            if (!document.fullscreenElement) {
-                if (playerWrapper.requestFullscreen) await playerWrapper.requestFullscreen();
-                else if (playerWrapper.webkitRequestFullscreen) await playerWrapper.webkitRequestFullscreen();
+            if (!appEl.classList.contains('fullscreen-video')) {
+                appEl.classList.add('fullscreen-video');
+                if (root.requestFullscreen) await root.requestFullscreen();
+                else if (root.webkitRequestFullscreen) await root.webkitRequestFullscreen();
                 if (screen.orientation && screen.orientation.lock) {
                     await screen.orientation.lock('landscape').catch(() => {});
                 }
             } else {
-                if (document.exitFullscreen) await document.exitFullscreen();
-                else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+                appEl.classList.remove('fullscreen-video');
+                if (document.fullscreenElement) {
+                    if (document.exitFullscreen) await document.exitFullscreen();
+                    else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+                }
             }
         } catch {}
     }
 
     document.addEventListener('fullscreenchange', () => {
         if (document.fullscreenElement) {
+            appEl.classList.add('fullscreen-video');
             if (screen.orientation && screen.orientation.lock) {
                 screen.orientation.lock('landscape').catch(() => {});
             }
         } else {
+            appEl.classList.remove('fullscreen-video');
             if (screen.orientation && screen.orientation.unlock) {
                 try { screen.orientation.unlock(); } catch {}
             }
@@ -709,12 +747,14 @@
         const m = state.media;
         if (m.mode === 'idle' || m.mode === 'webrtc') return;
         const t = (m.mode === 'youtube' && state.ytReady) ? state.ytPlayer.getCurrentTime() : getActiveDriver().currentTime;
+        triggerFlashIcon(!m.isPlaying);
         sendWs({ type: 'media_control', action: m.isPlaying ? 'pause' : 'play', time: t });
     };
 
     $('btn-sync-now').onclick = () => {
         performClockSync();
         applySyncToPlayer(true);
+        showToast('Синхронизировано');
     };
 
     $('seek-bar').oninput = (e) => {
@@ -741,13 +781,13 @@
 
     $('btn-mute').onclick = () => {
         if (state.media.mode === 'youtube' && state.ytReady) {
-            if (state.ytPlayer.isMuted()) { state.ytPlayer.unMute(); $('btn-mute').textContent = 'ЗВУК'; }
-            else { state.ytPlayer.mute(); $('btn-mute').textContent = 'БЕЗ ЗВ.'; }
+            if (state.ytPlayer.isMuted()) { state.ytPlayer.unMute(); showToast('Звук вкл'); }
+            else { state.ytPlayer.mute(); showToast('Без звука'); }
             return;
         }
         const target = (state.media.mode === 'dual' || state.media.mode === 'audio') ? audioEl : videoEl;
         target.muted = !target.muted;
-        $('btn-mute').textContent = target.muted ? 'БЕЗ ЗВ.' : 'ЗВУК';
+        showToast(target.muted ? 'Без звука' : 'Звук вкл');
     };
 
     $('sel-speed').onchange = (e) => {
@@ -816,6 +856,7 @@
                 }
             }
         }
+        showToast(`Сдвиг субтитров: ${state.subOffset.toFixed(1)}с`);
     }
 
     $('btn-sub-minus').onclick = () => shiftSubtitles(-0.5);
@@ -856,11 +897,11 @@
                 requestAnimationFrame(drawViz);
                 vizCanvas.width = vizCanvas.clientWidth;
                 vizCanvas.height = vizCanvas.clientHeight;
-                ctx2d.fillStyle = '#09090b';
+                ctx2d.fillStyle = '#08080a';
                 ctx2d.fillRect(0, 0, vizCanvas.width, vizCanvas.height);
                 analyser.getByteFrequencyData(buf);
                 const barW = vizCanvas.width / buf.length;
-                ctx2d.fillStyle = '#f4f4f5';
+                ctx2d.fillStyle = '#f4f4f7';
                 for (let i = 0; i < buf.length; i++) {
                     const h = (buf[i] / 255) * vizCanvas.height * 0.7;
                     ctx2d.fillRect(i * barW + 2, vizCanvas.height - h - 60, barW - 4, h);
@@ -882,8 +923,7 @@
     $('btn-save-torbox').onclick = () => {
         state.torboxKey = $('input-torbox-key').value.trim();
         localStorage.setItem('voidsync_torbox', state.torboxKey);
-        $('btn-save-torbox').textContent = 'СОХРАНЕНО';
-        setTimeout(() => { $('btn-save-torbox').textContent = 'СОХРАНИТЬ'; }, 1500);
+        showToast('TorBox ключ сохранен');
     };
 
     function runBrowserWebTorrent(source) {
@@ -989,6 +1029,7 @@
             if (data.media) {
                 if (addToQueueOnly) {
                     sendWs({ type: 'queue_add', item: { title: data.media.title, media: data.media } });
+                    showToast('Добавлено в очередь');
                 } else {
                     sendWs({ type: 'media_load', media: data.media });
                     $('menu-modal').classList.add('hidden');
@@ -1082,9 +1123,22 @@
             (data.results || []).forEach(r => {
                 const row = document.createElement('div');
                 row.className = 'list-item';
-                const title = document.createElement('span');
-                title.className = 'list-item-title';
-                title.textContent = `[${r.duration || '--:--'}] ${r.title}`;
+
+                const thumb = document.createElement('img');
+                thumb.className = 'search-thumb';
+                thumb.src = r.thumbnail || `https://i.ytimg.com/vi/${r.videoId}/mqdefault.jpg`;
+                thumb.loading = 'lazy';
+
+                const meta = document.createElement('div');
+                meta.className = 'search-meta';
+                const title = document.createElement('div');
+                title.className = 'search-title';
+                title.textContent = r.title;
+                const sub = document.createElement('div');
+                sub.className = 'search-sub';
+                sub.textContent = `${r.duration || '--:--'} · ${r.channel}`;
+                meta.append(title, sub);
+
                 const acts = document.createElement('div');
                 acts.className = 'list-item-actions';
 
@@ -1095,11 +1149,14 @@
 
                 const bQueue = document.createElement('button');
                 bQueue.className = 'btn-xs';
-                bQueue.textContent = '+ ОЧЕРЕДЬ';
-                bQueue.onclick = () => sendWs({ type: 'queue_add', item: { title: r.title, videoId: r.videoId, url: r.url } });
+                bQueue.textContent = '+';
+                bQueue.onclick = () => {
+                    sendWs({ type: 'queue_add', item: { title: r.title, videoId: r.videoId, url: r.url } });
+                    showToast('Добавлено в очередь');
+                };
 
                 acts.append(bPlay, bQueue);
-                row.append(title, acts);
+                row.append(thumb, meta, acts);
                 box.appendChild(row);
             });
         } catch {
@@ -1115,7 +1172,7 @@
         queue.forEach(q => {
             const row = document.createElement('div');
             row.className = 'list-item';
-            row.innerHTML = `<span class="list-item-title">${q.title}</span>`;
+            row.innerHTML = `<span class="list-item-title">${escapeHtml(q.title)}</span>`;
             const acts = document.createElement('div');
             acts.className = 'list-item-actions';
 
@@ -1158,7 +1215,7 @@
         Object.entries(saved).forEach(([name, items]) => {
             const row = document.createElement('div');
             row.className = 'list-item';
-            row.innerHTML = `<span class="list-item-title">${name} (${items.length})</span>`;
+            row.innerHTML = `<span class="list-item-title">${escapeHtml(name)} (${items.length})</span>`;
             const acts = document.createElement('div');
             acts.className = 'list-item-actions';
             const bLoad = document.createElement('button');
@@ -1199,10 +1256,8 @@
         const box = $('users-list');
         box.innerHTML = '';
         users.forEach(u => {
-            const row = document.createElement('div');
-            row.className = 'user-row';
-            const info = document.createElement('div');
-            info.className = 'user-info';
+            const chip = document.createElement('div');
+            chip.className = 'user-chip';
 
             const dot = document.createElement('span');
             dot.id = `speak-dot-${u.id}`;
@@ -1213,10 +1268,9 @@
             if (u.isHost) tags.push('HOST');
             if (u.inVoice) tags.push(u.micMuted ? 'MUTED' : 'MIC');
             if (u.buffering) tags.push('BUF');
-            label.textContent = `${u.nick}${u.id === state.clientId ? ' (вы)' : ''} ${tags.length ? '[' + tags.join('/') + ']' : ''}`;
+            label.textContent = `${u.nick}${tags.length ? ' [' + tags.join('/') + ']' : ''}`;
 
-            info.append(dot, label);
-            row.appendChild(info);
+            chip.append(dot, label);
 
             if (u.inVoice && u.id !== state.clientId) {
                 const vol = document.createElement('input');
@@ -1232,9 +1286,9 @@
                     const peer = state.voicePeers.get(u.id);
                     if (peer && peer.gainNode) peer.gainNode.gain.value = state.deafened ? 0 : val;
                 };
-                row.appendChild(vol);
+                chip.appendChild(vol);
             }
-            box.appendChild(row);
+            box.appendChild(chip);
         });
     }
 
@@ -1254,7 +1308,7 @@
                 if (p.audioEl) p.audioEl.remove();
                 state.voicePeers.delete(pid);
             }
-            $('btn-voice-join').textContent = 'ГОЛОС';
+            $('voice-btn-label').textContent = 'ГОЛОС';
             $('btn-voice-join').classList.remove('active-state');
             $('btn-mic-toggle').classList.add('hidden');
             $('btn-deafen').classList.add('hidden');
@@ -1268,7 +1322,7 @@
             });
             state.inVoice = true;
             state.micMuted = false;
-            $('btn-voice-join').textContent = 'ВЫЙТИ';
+            $('voice-btn-label').textContent = 'ВЫЙТИ';
             $('btn-voice-join').classList.add('active-state');
             $('btn-mic-toggle').classList.remove('hidden');
             $('btn-mic-toggle').textContent = 'МИК: ВКЛ';
@@ -1276,7 +1330,7 @@
             $('btn-deafen').classList.remove('hidden');
             sendWs({ type: 'voice_state', inVoice: true, micMuted: false });
         } catch {
-            alert('НЕТ ДОСТУПА К МИКРОФОНУ');
+            showToast('Нет доступа к микрофону');
         }
     }
 
@@ -1293,7 +1347,7 @@
 
     $('btn-deafen').onclick = () => {
         state.deafened = !state.deafened;
-        $('btn-deafen').textContent = state.deafened ? 'ЗВУК: ВЫКЛ' : 'ЗВУК: ВКЛ';
+        $('btn-deafen').textContent = state.deafened ? 'ЗВУК СОБЕСЕДНИКОВ: ВЫКЛ' : 'ЗВУК СОБЕСЕДНИКОВ: ВКЛ';
         for (const [pid, p] of state.voicePeers.entries()) {
             if (p.gainNode) p.gainNode.gain.value = state.deafened ? 0 : (state.peerVolumes[pid] ?? 1);
         }
@@ -1376,7 +1430,7 @@
             state.localScreenStream = null;
             for (const pc of state.screenPeers.values()) pc.close();
             state.screenPeers.clear();
-            $('btn-share-screen-modal').textContent = 'ТРАНСЛИРОВАТЬ ВКЛАДКУ / ЭКРАН';
+            $('btn-share-screen-modal').textContent = 'ТРАНСЛИРОВАТЬ ВКЛАДКУ / ЭКРАН (NETFLIX)';
             sendWs({ type: 'media_load', media: { mode: 'idle', title: '', src: '' } });
             return;
         }
@@ -1529,12 +1583,72 @@
         }
     }
 
-    const HEART = '♥\uFE0E';
-    const REACTION_SET = [HEART, '★\uFE0E', '▲', '▼', '✓', '✕'];
+    const HEART_KEY = 'heart';
+    const REACTION_KEYS = ['heart', 'star', 'up', 'down', 'check', 'bolt'];
+
+    function reactionHtml(key) {
+        if (key === 'heart') {
+            return `<svg class="react-icon-svg" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>`;
+        }
+        const map = { star: '★', up: '▲', down: '▼', check: '✓', bolt: '⚡︎' };
+        return map[key] || key;
+    }
+
+    function initVoicePlayer(container) {
+        const audio = container.querySelector('audio');
+        const btnPlay = container.querySelector('.btn-voice-play');
+        const bar = container.querySelector('.voice-wave-bar');
+        const progress = container.querySelector('.voice-wave-progress');
+        const timeText = container.querySelector('.voice-time');
+        const speedPill = container.querySelector('.voice-speed-pill');
+        if (!audio) return;
+
+        const playSvg = `<svg class="icon" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+        const pauseSvg = `<svg class="icon" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
+
+        btnPlay.onclick = (e) => {
+            e.stopPropagation();
+            if (audio.paused) {
+                document.querySelectorAll('.voice-msg-player audio').forEach(a => { if (a !== audio) a.pause(); });
+                audio.play();
+                btnPlay.innerHTML = pauseSvg;
+            } else {
+                audio.pause();
+                btnPlay.innerHTML = playSvg;
+            }
+        };
+
+        audio.ontimeupdate = () => {
+            if (audio.duration && isFinite(audio.duration)) {
+                progress.style.width = (audio.currentTime / audio.duration * 100) + '%';
+                timeText.textContent = `${formatTime(audio.currentTime)} / ${formatTime(audio.duration)}`;
+            }
+        };
+
+        audio.onended = () => {
+            btnPlay.innerHTML = playSvg;
+            progress.style.width = '0%';
+        };
+
+        bar.onclick = (e) => {
+            e.stopPropagation();
+            if (!audio.duration || !isFinite(audio.duration)) return;
+            const rect = bar.getBoundingClientRect();
+            audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
+        };
+
+        speedPill.onclick = (e) => {
+            e.stopPropagation();
+            if (audio.playbackRate === 1) audio.playbackRate = 1.5;
+            else if (audio.playbackRate === 1.5) audio.playbackRate = 2;
+            else audio.playbackRate = 1;
+            speedPill.textContent = audio.playbackRate + 'x';
+        };
+    }
 
     function appendChatMessage(msg) {
         const box = $('chat-messages');
-        const isMine = msg.userId === state.clientId;
+        const isMine = (msg.userId === state.clientId) || (msg.nick === state.nick && !msg.userId);
         const wrap = document.createElement('div');
         wrap.className = `msg-wrap ${isMine ? 'mine' : 'other'}`;
         wrap.id = `msg-${msg.id}`;
@@ -1570,10 +1684,23 @@
                 vid.controls = true;
                 mediaBox.appendChild(vid);
             } else if (mime.startsWith('audio/')) {
-                const aud = document.createElement('audio');
-                aud.src = msg.file.url;
-                aud.controls = true;
-                mediaBox.appendChild(aud);
+                const vBox = document.createElement('div');
+                vBox.className = 'voice-msg-player';
+                vBox.innerHTML = `
+                    <button class="btn-voice-play" type="button">
+                        <svg class="icon" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    </button>
+                    <div class="voice-wave-container">
+                        <div class="voice-wave-bar"><div class="voice-wave-progress"></div></div>
+                        <div class="voice-meta-row">
+                            <span class="voice-time">00:00 / ${formatTime(msg.audioDuration || 0)}</span>
+                            <span class="voice-speed-pill">1x</span>
+                        </div>
+                    </div>
+                    <audio src="${msg.file.url}" preload="metadata" style="display:none;"></audio>
+                `;
+                mediaBox.appendChild(vBox);
+                setTimeout(() => initVoicePlayer(vBox), 20);
             } else {
                 const a = document.createElement('a');
                 a.href = msg.file.url;
@@ -1594,13 +1721,13 @@
 
         const picker = document.createElement('div');
         picker.className = 'react-picker hidden';
-        REACTION_SET.forEach(em => {
+        REACTION_KEYS.forEach(rk => {
             const b = document.createElement('button');
             b.className = 'react-btn';
-            b.textContent = em;
+            b.innerHTML = reactionHtml(rk);
             b.onclick = (e) => {
                 e.stopPropagation();
-                sendWs({ type: 'chat_react', messageId: msg.id, emoji: em });
+                sendWs({ type: 'chat_react', messageId: msg.id, emoji: rk });
                 picker.classList.add('hidden');
             };
             picker.appendChild(b);
@@ -1609,7 +1736,6 @@
         const toggleReactBtn = document.createElement('button');
         toggleReactBtn.className = 'react-toggle-btn';
         toggleReactBtn.textContent = '+';
-        toggleReactBtn.title = 'Реакции';
         toggleReactBtn.onclick = (e) => {
             e.stopPropagation();
             picker.classList.toggle('hidden');
@@ -1618,15 +1744,19 @@
         footer.append(reactRow, toggleReactBtn);
 
         let lastMsgTap = 0;
+        let touchMoved = false;
         card.addEventListener('dblclick', (e) => {
-            if (e.target.tagName === 'A' || e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO') return;
-            sendWs({ type: 'chat_react', messageId: msg.id, emoji: HEART });
+            if (['A', 'VIDEO', 'AUDIO', 'BUTTON'].includes(e.target.tagName)) return;
+            sendWs({ type: 'chat_react', messageId: msg.id, emoji: HEART_KEY });
         });
+        card.addEventListener('touchstart', () => { touchMoved = false; });
+        card.addEventListener('touchmove', () => { touchMoved = true; });
         card.addEventListener('touchend', (e) => {
+            if (touchMoved || ['A', 'VIDEO', 'AUDIO', 'BUTTON'].includes(e.target.tagName)) return;
             const now = Date.now();
             if (now - lastMsgTap < 280) {
                 e.preventDefault();
-                sendWs({ type: 'chat_react', messageId: msg.id, emoji: HEART });
+                sendWs({ type: 'chat_react', messageId: msg.id, emoji: HEART_KEY });
                 lastMsgTap = 0;
             } else {
                 lastMsgTap = now;
@@ -1646,11 +1776,11 @@
 
     function renderMessageReactions(container, messageId, reactions) {
         container.innerHTML = '';
-        Object.entries(reactions).forEach(([em, users]) => {
+        Object.entries(reactions).forEach(([rk, users]) => {
             const b = document.createElement('button');
             b.className = 'react-btn' + (users.includes(state.clientId) ? ' mine' : '');
-            b.textContent = `${em} ${users.length}`;
-            b.onclick = () => sendWs({ type: 'chat_react', messageId, emoji: em });
+            b.innerHTML = `${reactionHtml(rk)} ${users.length}`;
+            b.onclick = () => sendWs({ type: 'chat_react', messageId, emoji: rk });
             container.appendChild(b);
         });
     }
@@ -1670,15 +1800,15 @@
     $('btn-chat-send').onclick = sendChatText;
     $('input-chat').onkeydown = (e) => { if (e.key === 'Enter') sendChatText(); };
 
-    async function uploadChatFile(file) {
+    async function uploadChatFile(file, audioDuration = 0) {
         if (!file) return;
-        $('chat-upload-progress').textContent = 'ЗАГРУЗКА...';
+        $('chat-upload-progress').textContent = 'ОТПРАВКА...';
         const fd = new FormData();
         fd.append('file', file);
         try {
             const resp = await fetch('/api/chat/upload', { method: 'POST', body: fd });
             const info = await resp.json();
-            if (info.url) sendWs({ type: 'chat_msg', kind: 'file', text: '', file: info });
+            if (info.url) sendWs({ type: 'chat_msg', kind: 'file', text: '', file: info, audioDuration });
         } finally {
             $('chat-upload-progress').textContent = '';
         }
@@ -1702,39 +1832,64 @@
         }
     };
 
-    $('btn-voice-msg').onclick = async () => {
-        if (state.isRecording && state.recorder) {
-            state.recorder.stop();
-            state.isRecording = false;
-            clearInterval(state.recTimer);
-            $('btn-voice-msg').textContent = '●';
-            $('btn-voice-msg').classList.remove('active-state');
-            return;
-        }
+    const btnVoiceMsg = $('btn-voice-msg');
+    btnVoiceMsg.addEventListener('contextmenu', e => e.preventDefault());
+
+    async function startHoldVoice(e) {
+        e.preventDefault();
+        if (state.isRecording) return;
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            state.recStream = stream;
             state.recChunks = [];
-            state.recorder = new MediaRecorder(stream);
-            state.recorder.ondataavailable = e => { if (e.data.size > 0) state.recChunks.push(e.data); };
-            state.recorder.onstop = () => {
-                stream.getTracks().forEach(t => t.stop());
-                const blob = new Blob(state.recChunks, { type: 'audio/webm' });
-                const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
-                uploadChatFile(file);
-            };
+            const mime = MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : 'audio/webm';
+            state.recorder = new MediaRecorder(stream, { mimeType: mime });
+            state.recorder.ondataavailable = ev => { if (ev.data.size > 0) state.recChunks.push(ev.data); };
             state.recorder.start();
             state.isRecording = true;
+            state.recStartAt = Date.now();
             state.recSeconds = 0;
-            $('btn-voice-msg').textContent = '0:00';
-            $('btn-voice-msg').classList.add('active-state');
+
+            btnVoiceMsg.classList.add('active-state');
+            $('voice-record-bar').classList.remove('hidden');
+            $('voice-timer').textContent = '00:00';
             state.recTimer = setInterval(() => {
                 state.recSeconds++;
-                $('btn-voice-msg').textContent = formatTime(state.recSeconds);
+                $('voice-timer').textContent = formatTime(state.recSeconds);
             }, 1000);
         } catch {
-            alert('НЕТ ДОСТУПА К МИКРОФОНУ');
+            showToast('Нет доступа к микрофону');
         }
-    };
+    }
+
+    function stopHoldVoice() {
+        if (!state.isRecording || !state.recorder) return;
+        const heldMs = Date.now() - state.recStartAt;
+        const durSec = state.recSeconds;
+        state.isRecording = false;
+        clearInterval(state.recTimer);
+        btnVoiceMsg.classList.remove('active-state');
+        $('voice-record-bar').classList.add('hidden');
+
+        state.recorder.onstop = () => {
+            if (state.recStream) state.recStream.getTracks().forEach(t => t.stop());
+            if (heldMs < 450) {
+                showToast('Удерживайте кнопку для записи голосового');
+                return;
+            }
+            const mime = state.recorder.mimeType || 'audio/webm';
+            const ext = mime.includes('mp4') ? 'm4a' : 'webm';
+            const blob = new Blob(state.recChunks, { type: mime });
+            const file = new File([blob], `voice_${Date.now()}.${ext}`, { type: mime });
+            uploadChatFile(file, Math.max(1, durSec));
+        };
+
+        if (state.recorder.state === 'recording') state.recorder.stop();
+    }
+
+    btnVoiceMsg.addEventListener('pointerdown', startHoldVoice);
+    window.addEventListener('pointerup', stopHoldVoice);
+    window.addEventListener('pointercancel', stopHoldVoice);
 
     function updateBufferLockUI() {
         $('btn-buffer-lock').textContent = state.bufferLock ? 'ВКЛ' : 'ВЫКЛ';
@@ -1747,10 +1902,7 @@
 
     $('btn-copy-link').onclick = () => {
         navigator.clipboard.writeText(window.location.href).then(() => {
-            const badge = $('room-badge');
-            const old = badge.textContent;
-            badge.textContent = 'СКОПИРОВАНО';
-            setTimeout(() => { badge.textContent = old; }, 1500);
+            showToast('Ссылка скопирована!');
         });
     };
 
@@ -1760,6 +1912,7 @@
         state.nick = nick;
         localStorage.setItem('voidsync_nick', nick);
         sendWs({ type: 'set_nick', nick });
+        showToast('Ник обновлен');
     };
 
     $('btn-enter').onclick = () => {
@@ -1768,7 +1921,7 @@
         unlockMediaContext();
         requestWakeLock();
         $('gate-overlay').classList.add('hidden');
-        $('app').classList.remove('hidden');
+        appEl.classList.remove('hidden');
         connectRoom(room, nick);
     };
 })();
