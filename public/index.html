@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>VOID // SYNC</title>
+    <title>WatchParty</title>
     <link rel="stylesheet" href="/style.css">
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/webtorrent@2.5.10/dist/webtorrent.min.js"></script>
@@ -13,7 +13,7 @@
 
 <div id="gate-overlay" class="overlay">
     <div class="gate-box">
-        <div class="gate-title">VOID // SYNC</div>
+        <div class="gate-title">ВХОД В КОМНАТУ</div>
         <div class="field-group">
             <label for="gate-nick">ВАШ НИКНЕЙМ</label>
             <input type="text" id="gate-nick" maxlength="24" placeholder="Например: Alex">
@@ -22,37 +22,40 @@
             <label for="gate-room">КОД КОМНАТЫ</label>
             <input type="text" id="gate-room" maxlength="16" placeholder="Пусто — создать новую">
         </div>
-        <button id="btn-enter" class="btn-accent">ВОЙТИ В КОМНАТУ</button>
+        <button id="btn-enter" class="btn-accent">ПОДКЛЮЧИТЬСЯ</button>
     </div>
 </div>
 
 <div id="menu-modal" class="modal-overlay hidden">
     <div class="modal-card">
         <div class="modal-header">
-            <span>МЕНЮ ИСТОЧНИКОВ И ОЧЕРЕДИ</span>
-            <button id="btn-close-menu" class="btn-icon">✕</button>
+            <span>МЕНЮ КОМНАТЫ</span>
+            <button id="btn-close-menu" class="btn-icon">
+                <svg class="icon" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
         </div>
+
         <div class="dock-tabs">
             <button class="dock-tab active" data-tab="tab-url">ССЫЛКА / ФАЙЛ</button>
             <button class="dock-tab" data-tab="tab-search">ПОИСК</button>
-            <button class="dock-tab" data-tab="tab-torrent">ТОРРЕНТЫ / MAGNET</button>
-            <button class="dock-tab" data-tab="tab-queue">ОЧЕРЕДЬ И ПЛЕЙЛИСТЫ</button>
-            <button class="dock-tab" data-tab="tab-bridge">NETFLIX / ЭКРАН</button>
+            <button class="dock-tab" data-tab="tab-torrent">ТОРРЕНТЫ</button>
+            <button class="dock-tab" data-tab="tab-queue">ОЧЕРЕДЬ</button>
+            <button class="dock-tab" data-tab="tab-room">КОМНАТА И НИК</button>
         </div>
 
         <div class="dock-content active" id="tab-url">
             <div class="action-row">
                 <input type="text" id="input-media-url" placeholder="YouTube, Spotify, VK, Google Drive, Magnet, MP4/M3U8...">
                 <button id="btn-play-url" class="btn-accent">ВКЛЮЧИТЬ</button>
-                <button id="btn-queue-url" class="btn-ghost">+ В ОЧЕРЕДЬ</button>
+                <button id="btn-queue-url" class="btn-ghost">+ ОЧЕРЕДЬ</button>
             </div>
             <div class="action-row">
                 <label class="file-btn">
-                    ЛОКАЛЬНЫЙ ФАЙЛ P2P (НАПРЯМУЮ, БЕЗ ЛИМИТА)
+                    ФАЙЛ P2P С УСТРОЙСТВА (ЛЮБОЙ РАЗМЕР)
                     <input type="file" id="input-p2p-media" class="hidden">
                 </label>
                 <label class="file-btn">
-                    ЗАГРУЗИТЬ НА СЕРВЕР (&lt;150 МБ, .MKV/.MP4)
+                    ЗАГРУЗИТЬ НА СЕРВЕР (&lt;150 МБ)
                     <input type="file" id="input-local-media" class="hidden">
                 </label>
             </div>
@@ -61,7 +64,7 @@
 
         <div class="dock-content" id="tab-search">
             <div class="action-row">
-                <input type="text" id="input-search" placeholder="Поиск фильмов, видео, музыки...">
+                <input type="text" id="input-search" placeholder="Поиск видео, фильмов, музыки...">
                 <button id="btn-search" class="btn-accent">НАЙТИ</button>
             </div>
             <div id="search-results" class="list-box"></div>
@@ -69,10 +72,10 @@
 
         <div class="dock-content" id="tab-torrent">
             <div class="action-row">
-                <input type="text" id="input-torbox-key" placeholder="TorBox API ключ (бесплатно 10 ГБ на torbox.app для magnet без ПК)">
+                <input type="text" id="input-torbox-key" placeholder="TorBox API ключ (бесплатно 10 ГБ на torbox.app)">
                 <button id="btn-save-torbox" class="btn-ghost">СОХРАНИТЬ</button>
                 <label class="file-btn">
-                    ЗАГРУЗИТЬ .TORRENT
+                    .TORRENT ФАЙЛ
                     <input type="file" id="input-torrent-file" accept=".torrent" class="hidden">
                 </label>
             </div>
@@ -86,11 +89,11 @@
                 <button id="btn-play-next" class="btn-ghost">СЛЕДУЮЩЕЕ</button>
                 <button id="btn-clear-queue" class="btn-ghost">ОЧИСТИТЬ</button>
                 <input type="text" id="input-playlist-name" placeholder="Название плейлиста">
-                <button id="btn-save-playlist" class="btn-accent">СОХРАНИТЬ ПЛЕЙЛИСТ</button>
+                <button id="btn-save-playlist" class="btn-accent">СОХРАНИТЬ</button>
             </div>
             <div class="split-lists">
                 <div>
-                    <div class="sub-head">ОЧЕРЕДЬ КОМНАТЫ</div>
+                    <div class="sub-head">ОЧЕРЕДЬ</div>
                     <div id="queue-list" class="list-box"></div>
                 </div>
                 <div>
@@ -100,14 +103,17 @@
             </div>
         </div>
 
-        <div class="dock-content" id="tab-bridge">
-            <div class="bridge-info">
-                <p>Для защищенных сайтов (Netflix, Кинопоиск, Disney+) используйте захват вкладки со звуком или установите скрипт синхронизации для Tampermonkey:</p>
-                <div class="action-row">
-                    <button id="btn-share-screen-modal" class="btn-accent">ТРАНСЛИРОВАТЬ ВКЛАДКУ / ЭКРАН</button>
-                    <a href="/sync-bridge.user.js" download="sync-bridge.user.js" class="btn-ghost inline-btn">СКАЧАТЬ SYNC-BRIDGE.USER.JS</a>
-                </div>
+        <div class="dock-content" id="tab-room">
+            <div class="action-row">
+                <input type="text" id="inline-nick" maxlength="24" placeholder="Ваш никнейм">
+                <button id="btn-save-nick" class="btn-accent">СМЕНИТЬ НИК</button>
             </div>
+            <div class="action-row">
+                <button id="btn-deafen" class="btn-ghost hidden">ЗВУК СОБЕСЕДНИКОВ: ВКЛ</button>
+                <button id="btn-share-screen-modal" class="btn-ghost">ТРАНСЛИРОВАТЬ ВКЛАДКУ / ЭКРАН (NETFLIX)</button>
+                <a href="/sync-bridge.user.js" download="sync-bridge.user.js" class="btn-ghost inline-btn">TAMPERMONKEY МОСТ</a>
+            </div>
+            <div class="status-text" id="sync-telemetry">PING: 0ms</div>
         </div>
     </div>
 </div>
@@ -115,19 +121,24 @@
 <div id="app" class="app hidden">
     <header class="topbar">
         <div class="top-left">
-            <button id="btn-open-menu" class="btn-accent">☰ МЕНЮ / ИСТОЧНИК</button>
-            <button id="btn-copy-link" class="btn-pill" title="Скопировать ссылку-приглашение">
-                <span id="room-badge">ROOM: ---</span> · ССЫЛКА
+            <button id="btn-open-menu" class="btn-accent">
+                <svg class="icon" viewBox="0 0 24 24"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                <span>МЕНЮ</span>
             </button>
-            <span id="sync-telemetry" class="telemetry">0ms</span>
+            <button id="btn-copy-link" class="btn-pill" title="Скопировать ссылку">
+                <span id="room-badge">ROOM</span>
+                <svg class="icon-sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
         </div>
         <div class="top-right">
-            <input type="text" id="inline-nick" class="input-nick" maxlength="24">
-            <button id="btn-save-nick" class="btn-ghost">НИК</button>
-            <button id="btn-voice-join" class="btn-ghost">ГОЛОС</button>
-            <button id="btn-mic-toggle" class="btn-ghost hidden">МИК: ВЫКЛ</button>
-            <button id="btn-deafen" class="btn-ghost hidden">ЗВУК: ВКЛ</button>
-            <button id="btn-toggle-sidebar" class="btn-ghost active-state">ЧАТ</button>
+            <button id="btn-voice-join" class="btn-ghost">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+                <span id="voice-btn-label">ГОЛОС</span>
+            </button>
+            <button id="btn-mic-toggle" class="btn-ghost hidden">МИК: ВКЛ</button>
+            <button id="btn-toggle-sidebar" class="btn-ghost active-state" title="Чат">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            </button>
         </div>
     </header>
 
@@ -135,15 +146,20 @@
         <main class="main-col" id="main-col">
             <div class="player-wrapper" id="player-wrapper">
                 <div id="yt-container" class="yt-container hidden"><div id="yt-player"></div></div>
-                <video id="video-player" playsinline disablePictureInPicture="false" crossorigin="anonymous"></video>
+                <video id="video-player" playsinline webkit-playsinline x5-playsinline disableRemotePlayback controlsList="nodownload nofullscreen noremoteplayback" crossorigin="anonymous"></video>
                 <audio id="audio-player" crossorigin="anonymous"></audio>
                 <canvas id="audio-viz" class="hidden"></canvas>
 
                 <div id="player-tap-layer" class="tap-layer"></div>
 
+                <div id="play-state-flash" class="state-flash">
+                    <svg id="flash-icon-play" class="flash-icon" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    <svg id="flash-icon-pause" class="flash-icon hidden" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                </div>
+
                 <div id="media-title-overlay" class="media-title-bar"></div>
                 <div id="p2p-transfer-overlay" class="p2p-overlay hidden"></div>
-                <button id="btn-unmute-prompt" class="unmute-prompt hidden">НАЖМИТЕ ДЛЯ ВКЛЮЧЕНИЯ ЗВУКА</button>
+                <button id="btn-unmute-prompt" class="unmute-prompt hidden">ВКЛЮЧИТЬ ЗВУК</button>
 
                 <div id="player-settings-menu" class="player-settings-menu hidden">
                     <div class="pset-row">
@@ -177,7 +193,7 @@
                         </select>
                     </div>
                     <div class="pset-row">
-                        <span>СДВИГ / ФАЙЛ СУБ</span>
+                        <span>СУБТ. СДВИГ / ФАЙЛ</span>
                         <div class="pset-btns">
                             <button id="btn-sub-minus" class="btn-xs">-0.5с</button>
                             <button id="btn-sub-plus" class="btn-xs">+0.5с</button>
@@ -197,16 +213,27 @@
                     </div>
                     <div class="ctrl-row">
                         <div class="ctrl-left">
-                            <button id="btn-play" class="btn-ctrl">▶</button>
-                            <button id="btn-sync-now" class="btn-ctrl" title="Синхронизировать">↻ SYNC</button>
+                            <button id="btn-play" class="btn-ctrl">
+                                <svg id="icon-play" class="icon" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                                <svg id="icon-pause" class="icon hidden" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                            </button>
+                            <button id="btn-sync-now" class="btn-ctrl" title="Синхронизировать">
+                                <svg class="icon" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                            </button>
                             <span id="time-display" class="time-text">00:00 / 00:00</span>
-                            <button id="btn-mute" class="btn-ctrl">ЗВУК</button>
+                            <button id="btn-mute" class="btn-ctrl" title="Звук">
+                                <svg class="icon" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+                            </button>
                             <input type="range" id="vol-slider" min="0" max="1" step="0.01" value="1">
                         </div>
                         <div class="ctrl-right">
-                            <button id="btn-pset-toggle" class="btn-ctrl">⚙ НАСТРОЙКИ</button>
-                            <button id="btn-pip" class="btn-ctrl">PIP</button>
-                            <button id="btn-fullscreen" class="btn-ctrl">⛶</button>
+                            <button id="btn-pset-toggle" class="btn-ctrl" title="Настройки плеера">
+                                <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                            </button>
+                            <button id="btn-pip" class="btn-ctrl" title="Картинка в картинке">PIP</button>
+                            <button id="btn-fullscreen" class="btn-ctrl" title="Полный экран">
+                                <svg class="icon" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -214,31 +241,37 @@
         </main>
 
         <aside class="sidebar" id="sidebar">
-            <div class="users-panel">
-                <div class="panel-header">
-                    <span>В КОМНАТЕ (<span id="user-count">0</span>)</span>
-                    <span class="hint-sm">2× клик по сообщ. = ♥︎</span>
-                </div>
-                <div id="users-list" class="users-list"></div>
+            <div class="users-strip">
+                <span class="strip-label">УЧАСТНИКИ (<span id="user-count">0</span>):</span>
+                <div id="users-list" class="users-list-row"></div>
             </div>
 
             <div class="chat-panel" id="chat-drop-zone">
                 <div class="chat-messages" id="chat-messages"></div>
                 <div id="chat-upload-progress" class="status-text pad-h"></div>
+                <div id="voice-record-bar" class="voice-record-bar hidden">
+                    <span class="rec-dot"></span>
+                    <span>Запись голосового: <b id="voice-timer">00:00</b> (отпустите для отправки)</span>
+                </div>
                 <div class="chat-input-area">
-                    <label class="btn-icon file-btn" title="Отправить фото, видео, файл">
-                        +
+                    <label class="btn-icon file-btn" title="Прикрепить файл">
+                        <svg class="icon" viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                         <input type="file" id="input-chat-file" class="hidden">
                     </label>
-                    <button id="btn-voice-msg" class="btn-icon" title="Голосовое сообщение">●</button>
+                    <button id="btn-voice-msg" class="btn-icon" title="Удерживайте для записи голосового">
+                        <svg class="icon" viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+                    </button>
                     <input type="text" id="input-chat" placeholder="Сообщение...">
-                    <button id="btn-chat-send" class="btn-accent">→</button>
+                    <button id="btn-chat-send" class="btn-accent btn-send-circle">
+                        <svg class="icon" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    </button>
                 </div>
             </div>
         </aside>
     </div>
 </div>
 
+<div id="toast" class="toast"></div>
 <div id="voice-audio-container" class="hidden"></div>
 <script src="/app.js"></script>
 </body>
